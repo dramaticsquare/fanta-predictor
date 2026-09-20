@@ -330,9 +330,11 @@ def odds_to_lambdas(ev):
     return {"lh": lh, "la": la, "p1": float(p1), "px": float(px), "p2": float(p2), "n_book": len(P)}
 
 
-def _http_json(url, timeout=25):
+def _http_json(url, timeout=25, headers_out=None):
     req = urllib.request.Request(url, headers={"User-Agent": "fanta-predictor"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
+        if headers_out is not None:
+            headers_out.update({k.lower(): v for k, v in r.headers.items()})
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -342,7 +344,7 @@ def fetch_odds(api_key, cache_dir=".cache_fanta"):
     cache.mkdir(exist_ok=True)
     f = cache / "odds.json"
     if f.exists() and (time.time() - f.stat().st_mtime) < CFG["odds_cache_hours"] * 3600:
-        return json.loads(f.read_text(encoding="utf-8"))
+        return json.loads(f.read_text(encoding="utf-8")), None
     base = "https://api.the-odds-api.com/v4/sports"
     sports = _http_json(f"{base}/?apiKey={urllib.parse.quote(api_key)}")          # chiamata gratuita
     keys = [s["key"] for s in sports]
@@ -352,11 +354,12 @@ def fetch_odds(api_key, cache_dir=".cache_fanta"):
         raise RuntimeError("campionato Serie A non presente nell'elenco dell'API quote")
     last = None
     for markets in ("h2h,totals", "h2h"):                                        # totals: se non disponibile, solo 1X2
+        hdr = {}
         try:
             data = _http_json(f"{base}/{key}/odds/?regions=eu&markets={markets}&oddsFormat=decimal"
-                              f"&apiKey={urllib.parse.quote(api_key)}")
+                              f"&apiKey={urllib.parse.quote(api_key)}", headers_out=hdr)
             f.write_text(json.dumps(data), encoding="utf-8")
-            return data
+            return data, hdr.get("x-requests-remaining")
         except Exception as e:  # noqa: BLE001
             last = e
     raise last
@@ -364,12 +367,17 @@ def fetch_odds(api_key, cache_dir=".cache_fanta"):
 
 def attach_odds(events, titles):
     """(casa, trasferta) con nomi Understat -> gol attesi dalle quote."""
-    out = {}
+    out, unknown = {}, set()
     for ev in events or []:
         h, a = resolve_team(ev["home_team"], titles), resolve_team(ev["away_team"], titles)
+        for nm, t in ((ev["home_team"], h), (ev["away_team"], a)):
+            if t is None:
+                unknown.add(nm)
         lam = odds_to_lambdas(ev) if h and a else None
         if lam:
             out[(h, a)] = lam
+    if unknown:
+        print("  ! quote: squadre non riconosciute:", ", ".join(sorted(unknown)))
     return out
 
 
@@ -537,7 +545,7 @@ def best_lineup(df, modules=None):
 
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
-        odds_events=None, calib=None):
+        odds_events=None, calib=None, odds_note=None):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
     matches_all = prov.matches(season)
@@ -642,7 +650,17 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
         print("\nATTENZIONE:")
         for p in problems:
             print("  -", p)
-    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures)}
+    if backtest:
+        odds_msg = "non usate (backtest)"
+    elif odds_events is None:
+        odds_msg = odds_note or "non attive"
+    else:
+        odds_msg = f"{len(odds_map)}/{len(fixtures)} partite"
+        if len(odds_map) < len(fixtures):
+            odds_msg += f" ({len(odds_events)} eventi ricevuti; le partite gia' iniziate non hanno quote)"
+        if odds_note:
+            odds_msg += f" - {odds_note}"
+    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg}
     if check_only:
         return None, None, problems, info
     return pd.DataFrame(rows), fixtures, problems, info
@@ -885,7 +903,7 @@ if (D.calib && D.calib.n > 0) { const C = document.getElementById("cal"), c = D.
     "; prevedere la media del ruolo darebbe " + c.mae_media_ruolo.toFixed(2) + "." + (c.mae_media_giocatore != null ?
     " Su chi ha storico: modello " + c.mae_modello_sub.toFixed(2) + " contro " + c.mae_media_giocatore.toFixed(2) + " usando la media dei suoi ultimi fantavoti." : "")));
   C.appendChild(mk("div", "info", c.n < 60 ? "Campione ancora piccolo: prendi questi numeri come indicativi." : "")); }
-document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds + "/" + D.partite + " partite";
+document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg;
 document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
 build(); update();
@@ -907,6 +925,7 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
         "giornata": fixtures[0]["datetime"][:10],
         "gno": info.get("rno", 0),
         "odds": info.get("odds", 0),
+        "odds_msg": info.get("odds_msg", "non attive"),
         "partite": info.get("partite", len(fixtures)),
         "agg": f"{now:%d/%m/%Y %H:%M}",
         "calib": rep if rep and rep.get("n", 0) > 0 else None,
@@ -959,17 +978,25 @@ def main(argv=None):
             print(f"-> previsioni della giornata {g} salvate in {f}\n")
         return
 
-    odds_events, key = None, os.environ.get("ODDS_API_KEY", "").strip()
-    if key and not a.no_odds and not a.check:
+    odds_events, odds_note, key = None, None, os.environ.get("ODDS_API_KEY", "").strip()
+    if a.no_odds:
+        odds_note = "disattivate (--no-odds)"
+    elif key and not a.check:
         try:
-            odds_events = fetch_odds(key)
+            odds_events, remaining = fetch_odds(key)
+            odds_note = f"crediti rimasti {remaining}" if remaining is not None else None
+            if remaining is not None:
+                print(f"Crediti The Odds API rimasti: {remaining}")
         except Exception as e:  # noqa: BLE001
-            print(f"  ! quote bookmaker non disponibili, uso solo xG ({str(e).replace(key, '***')})")
-    elif not a.no_odds and not a.check:
+            msg = str(e).replace(key, "***")
+            odds_note = f"non attive: errore API ({msg[:80]})"
+            print(f"  ! quote bookmaker non disponibili, uso solo xG ({msg})")
+    elif not a.check:
+        odds_note = "non attive: manca il secret ODDS_API_KEY"
         print("Quote bookmaker: nessuna ODDS_API_KEY impostata, uso solo xG.")
 
     df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
-                                       odds_events=odds_events)
+                                       odds_events=odds_events, odds_note=odds_note)
     if a.check or df is None:
         return
     Path(a.storico).mkdir(parents=True, exist_ok=True)
