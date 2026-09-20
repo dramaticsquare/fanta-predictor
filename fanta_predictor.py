@@ -76,7 +76,7 @@ CFG = {
     "calib_min_obs": 5,          # osservazioni minime per ruolo prima di applicare una correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
     "tz": "Europe/Rome",
-    "version": "20/09 - incolla elenco",
+    "version": "20/09 - lettore Fantacalcio.it",
     "cache_hours": 12,
 }
 
@@ -951,7 +951,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
 <div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
 <details class="card" id="pdet"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
-  <div class="s" style="margin:6px 0">Una riga per giocatore, copiata da app o siti. Riconosco i giocatori della tua rosa: "Maignan 100%" imposta la titolarit&agrave;, "Pulisic infortunato" o "Lucum&igrave; squalificato" lo mette fuori, "Hojlund titolare" lo porta al 90%.</div>
+  <div class="s" style="margin:6px 0">Incolla il testo di un sito con le probabili formazioni, anche pi&ugrave; partite insieme: riconosco i blocchi tipo &quot;MILAN (3-4-2-1): Maignan; Gila, ...&quot; (titolari 90%, alternative con &quot;/&quot; 50%, gli altri della tua squadra 15%), i &quot;Ballottaggi ... 55%-45%&quot; e gli &quot;Indisponibili/Squalificati: ...&quot;. Vanno bene anche righe singole come &quot;Maignan 100%&quot; o &quot;Pulisic infortunato&quot;.</div>
   <textarea id="paste" rows="6" placeholder="Maignan 100%&#10;Pulisic infortunato&#10;Lucum&igrave; squalificato"></textarea>
   <div class="bh" style="margin-top:6px"><select id="pmode"><option value="auto">Riconosci dalla riga</option><option value="out">Sono tutti indisponibili</option><option value="start">Sono tutti probabili titolari</option></select>
   <button id="apply">Applica</button></div><div class="info" id="pout"></div></details>
@@ -1060,12 +1060,50 @@ document.getElementById("reset").addEventListener("click", () => { S.forEach(s =
 
 const norm = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\u00f8/gi, "o").replace(/\u00e6/gi, "ae").replace(/\u0142/gi, "l").replace(/\u0111/gi, "d").replace(/\u00df/g, "ss").toLowerCase();
 const toks = t => norm(t).replace(/[^a-z ]/g, " ").split(/\s+/).filter(Boolean);
-function applyPaste(){
-  const lines = document.getElementById("paste").value.split(/\n/).map(x => x.trim()).filter(Boolean), mode = document.getElementById("pmode").value;
+const TW = s => norm(s).replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+const nameMatches = (s, txt) => { const lt = new Set(toks(txt)), l = toks(s.Giocatore).filter(t => t.length > 1); return l.length > 0 && l.every(t => lt.has(t)); };
+function teamIn(header){
+  const h = " " + TW(header) + " "; let best = null, bi = -1;
+  [...new Set(S.map(s => s.Squadra))].forEach(t => { const i = h.lastIndexOf(" " + TW(t) + " "); if (i > bi) { bi = i; best = t; } });
+  return best;
+}
+const SEC = "Ballottagg|Squalificat|Indisponibil|Infortunat|Diffidat|Panchina|Arbitro|Allenator|All\\.|Probabili formazioni";
+function parseBlocks(text){
+  const re = /\((\d(?:-\d){1,3})\)\s*:/g, marks = []; let m;
+  while ((m = re.exec(text))) marks.push({start: m.index, end: re.lastIndex});
+  const acts = new Map(), teams = [];
+  const put = (s, p, out) => { const a = acts.get(s.Giocatore) || {s}; if (out) a.out = true; else if (p != null) a.p = p; acts.set(s.Giocatore, a); };
+  marks.forEach((mk, i) => {
+    const team = teamIn(text.slice(Math.max(0, mk.start - 45), mk.start)); if (!team) return;
+    if (!teams.includes(team)) teams.push(team);
+    let B = text.slice(mk.end, i + 1 < marks.length ? marks[i+1].start : text.length);
+    const cut = B.search(/probabili formazioni/i); if (cut >= 0) B = B.slice(0, cut);
+    const xiEnd = B.search(new RegExp("\\n|" + SEC, "i")), XI = xiEnd < 0 ? B : B.slice(0, xiEnd), rest = xiEnd < 0 ? "" : B.slice(xiEnd);
+    const groups = XI.split(/[;,]/).map(x => x.split("/").map(y => y.trim()).filter(Boolean)).filter(g => g.length);
+    const R = S.filter(s => s.Squadra === team);
+    if (groups.length >= 8) R.forEach(s => { const g = groups.find(g => g.some(a => nameMatches(s, a))); put(s, g ? (g.length > 1 ? 50 : 90) : 15, false); });
+    const bm = rest.match(new RegExp("Ballottagg\\w*\\s*:?\\s*([\\s\\S]*?)(?=Squalificat|Indisponibil|Infortunat|Diffidat|Panchina|Arbitro|Probabili|$)", "i"));
+    if (bm){
+      const T = bm[1], items = [];
+      const rb = /([^,;%\d]+?)\s+(\d{1,3})\s*%\s*[-\u2013]\s*([^,;%\d]+?)\s+(\d{1,3})\s*%/g; let x;
+      while ((x = rb.exec(T))) items.push([x[1], +x[2], x[3], +x[4]]);
+      if (!items.length){
+        const ra = /(\d{1,3})\s*%\s*[-\u2013]\s*(\d{1,3})\s*%/g; let last = 0;
+        while ((x = ra.exec(T))) { const seg = T.slice(last, x.index).replace(/^[\s,;:.\u00b7]+/, ""); last = ra.lastIndex;
+          const pr = seg.split(/\s[\u2013\u2014-]\s/); if (pr.length >= 2) items.push([pr[0], +x[1], pr[1], +x[2]]); }
+      }
+      items.forEach(it => R.forEach(s => { if (nameMatches(s, it[0])) put(s, it[1], false); if (nameMatches(s, it[2])) put(s, it[3], false); }));
+    }
+    const ro = new RegExp("(Squalificat\\w*|Indisponibil\\w*|Infortunat\\w*|Assent\\w*)\\s*:\\s*([^|\\n]*?)(?=Squalificat|Indisponibil|Infortunat|Diffidat|Ballottagg|Panchina|Probabili|\\||\\n|$)", "gi");
+    let o; while ((o = ro.exec(rest))) o[2].split(/[,;]|\se\s|\//).forEach(n => { if (n.trim()) R.forEach(s => { if (nameMatches(s, n)) put(s, null, true); }); });
+  });
+  return {acts, teams};
+}
+function applyLines(text, mode){
   const done = [], seen = new Set(); let skipped = 0;
-  lines.forEach(line => {
+  text.split(/\n/).map(x => x.trim()).filter(Boolean).forEach(line => {
     const lt = new Set(toks(line)), has = pre => [...lt].some(t => t.startsWith(pre));
-    const found = S.filter(s => { const l = toks(s.Giocatore).filter(t => t.length > 1); return l.length && l.every(t => lt.has(t)); });
+    const found = S.filter(s => nameMatches(s, line));
     if (!found.length) { skipped++; return; }
     const m = line.match(/(\d{1,3})\s*%/);
     found.forEach(s => {
@@ -1077,9 +1115,65 @@ function applyPaste(){
       if (what && !seen.has(s.Giocatore)) { seen.add(s.Giocatore); done.push(s.Giocatore + " " + what); }
     });
   });
-  save(); build(); update();
-  document.getElementById("pout").textContent = (done.length ? "Applicato: " + done.join(", ") + ". " : "Nessun giocatore riconosciuto. ") +
-    (skipped ? skipped + " righe senza giocatori della tua rosa." : "");
+  return {done, skipped};
+}
+
+const isMod = l => /^\d(?:-\d){1,3}$/.test(l || "");
+const isPct = l => /^\d{1,3}\s*%$/.test(l || "");
+function parseFantacalcio(text){
+  const L = text.split(/\r?\n/).map(x => x.trim()), n = L.length, acts = new Map(), read = [];
+  let pending = [], matches = 0, k = 0;
+  const put = (s, p, out) => { const a = acts.get(s.Giocatore) || {s}; if (out) a.out = true; else a.p = p; acts.set(s.Giocatore, a); };
+  while (k < n){
+    if (k + 1 < n && isMod(L[k+1]) && L[k] && !isPct(L[k]) && !isMod(L[k])) {          // "Bologna" + "3-4-2-1"
+      const name = L[k], entries = []; let j = k + 2, bench = false;
+      while (j < n){
+        const cur = L[j];
+        if (/^ultimo aggiornamento/i.test(cur)) break;
+        if (j + 1 < n && isMod(L[j+1]) && !isPct(cur)) break;                          // inizia la squadra dopo
+        if (/^panchina$/i.test(cur)) { bench = true; j++; continue; }
+        if (j + 1 < n && isPct(L[j+1]) && cur && !isPct(cur)) { entries.push({name: cur, pct: parseInt(L[j+1]), bench}); j += 2; continue; }
+        j++;
+      }
+      const rt = teamIn(name); read.push(rt || name); pending.push(rt);
+      if (rt) S.filter(s => s.Squadra === rt).forEach(s => { const e = entries.find(e => nameMatches(s, e.name)); put(s, e ? e.pct : 5, false); });
+      k = j; continue;
+    }
+    if (/^dettaglio calciatori/i.test(L[k])) {
+      const keys = pending.slice(-2).filter(Boolean), cand = S.filter(s => keys.includes(s.Squadra)); let j = k + 1, cur = null;
+      while (j < n && !/^(stemma|campioncino)\b/i.test(L[j]) && !(j + 1 < n && isMod(L[j+1]))) {
+        const t = L[j], hm = t.match(/^(ballottaggi|squalificati|diffidati|infortunati|in dubbio)$/i);
+        if (hm) cur = hm[1].toLowerCase();
+        else if (cur && t && !/^nessun/i.test(t) && !/[,\d%]/.test(t) && t.length <= 32 && /^[A-Z\u00c0-\u00dd]/.test(t)) {
+          if (cur === "squalificati" || cur === "infortunati") cand.forEach(s => { if (nameMatches(s, t)) put(s, null, true); });
+          else if (cur === "in dubbio") cand.forEach(s => { if (nameMatches(s, t)) put(s, 50, false); });
+        }
+        j++;
+      }
+      matches++; pending = []; k = j; continue;
+    }
+    k++;
+  }
+  return {acts, teams: [...new Set(read.filter(t => S.some(s => s.Squadra === t)))], nread: read.length, matches};
+}
+
+function applyPaste(){
+  const text = document.getElementById("paste").value, mode = document.getElementById("pmode").value, out = document.getElementById("pout");
+  const fc = parseFantacalcio(text); let res = fc, msg;
+  if (!fc.teams.length) res = parseBlocks(text);
+  if (res.teams.length){
+    const done = [];
+    res.acts.forEach(a => { const s = a.s;
+      if (a.out) { s.disp = false; done.push(s.Giocatore + " fuori"); }
+      else if (a.p != null) { const was = !s.disp; s.p = Math.max(0, Math.min(100, Math.round(a.p / 5) * 5)); s.disp = true; done.push(s.Giocatore + " " + s.p + "%" + (was ? " (era fuori: rimesso in gioco)" : "")); } });
+    const missing = [...new Set(S.map(s => s.Squadra))].filter(t => !res.teams.includes(t));
+    msg = (fc.teams.length ? "Fantacalcio.it: lette " + fc.nread + " squadre (" + fc.matches + " partite). " : "") + "Squadre della tua rosa trovate: " + res.teams.join(", ") + ". " + (done.length ? "Applicato: " + done.join(", ") + ". " : "Nessuna modifica ai tuoi giocatori. ") +
+      (missing.length ? "Non trovate nel testo: " + missing.join(", ") + "." : "");
+  } else {
+    const r = applyLines(text, mode); msg = r.done.length ? "Applicato: " + r.done.join(", ") + ". " + (r.skipped ? r.skipped + " righe senza giocatori della tua rosa." : "") :
+      "Non ho trovato blocchi tipo 'MILAN (3-4-2-1): Maignan; ...' n\u00e9 righe con nome e %/parola chiave. Se hai incollato una lista di soli nomi, scegli dal menu 'indisponibili' o 'titolari'.";
+  }
+  save(); build(); update(); out.textContent = msg;
 }
 document.getElementById("apply").addEventListener("click", applyPaste);
 document.getElementById("pbtn").addEventListener("click", () => { const d = document.getElementById("pdet"); d.open = true;
