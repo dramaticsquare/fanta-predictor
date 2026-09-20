@@ -1,7 +1,7 @@
 Giocatore,Squadra,Ruolo,Disp,Avversario,Data,xG,xA,CS%,Titolare%,Fantavoto,Voto,EV,Rif,Nota
 Yildiz,Juventus,A,False,vs Atalanta,20/09,0.26,0.28,,22,7.04,5.0,7.06,7.06,
 Conceicao,Juventus,C,True,vs Atalanta,20/09,0.27,0.17,,100,6.99,6.3,6.99,6.354,
-Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.31,0.09,,100,6.99,4.9,6.99,7.06,
+Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.31,0.09,,100,6.99,4.9,6.99,7.06,partita gia' iniziata/giocata
 Maldini,Cagliari,A,True,@ Udinese,19/09,0.3,0.1,,91,6.97,4.8,6.98,7.06,partita gia' iniziata/giocata
 Laurientè,Sassuolo,A,True,@ Monza,18/09,0.23,0.24,,100,6.86,4.6,6.86,7.06,partita gia' iniziata/giocata
 Ramon,Como,D,True,@ Frosinone,20/09,0.21,0.04,28.0,100,6.76,5.9,6.76,6.292,
@@ -19,8 +19,8 @@ Gabbia,Milan,D,True,vs Lecce,20/09,0.04,0.02,31.0,32,6.29,5.0,6.29,6.292,
 Alajbegovic,Juventus,C,True,vs Atalanta,20/09,0.1,0.07,,84,6.28,4.9,6.29,6.354,pochi dati
 Bernabè,Parma,C,True,vs Genoa,20/09,0.05,0.09,,42,6.2,4.7,6.29,6.354,
 Lucumì,Juventus,D,True,vs Atalanta,20/09,0.04,0.04,42.0,50,6.27,4.9,6.28,6.292,
-Badiashile,Napoli,D,True,@ Fiorentina,20/09,0.0,0.0,29.0,18,6.19,4.8,6.27,6.292,
-Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,,93,6.22,4.7,6.23,6.354,
+Badiashile,Napoli,D,True,@ Fiorentina,20/09,0.0,0.0,29.0,18,6.19,4.8,6.27,6.292,partita gia' iniziata/giocata
+Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,,93,6.22,4.7,6.23,6.354,partita gia' iniziata/giocata
 Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,31.0,100,4.95,5.7,4.95,4.6,
 Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,31.0,0,4.98,5.8,4.6,4.6,nessun dato Understat: usa lo slider
 Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,10.0,100,3.72,3.2,3.72,4.6,
