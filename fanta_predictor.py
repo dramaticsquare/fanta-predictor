@@ -69,6 +69,9 @@ CFG = {
     # quote dei bookmaker (The Odds API): peso dei gol attesi impliciti nelle quote rispetto al solo xG
     "odds_weight": 0.6,          # [EURISTICA]
     "odds_cache_hours": 3,       # risparmia crediti del piano gratuito
+    # infortuni/squalifiche (API-Football, facoltativo)
+    "injuries_cache_hours": 3,
+    "doubt_factor": 0.5,         # [EURISTICA] titolarita' moltiplicata per questo se il giocatore e' "in dubbio"
     # calibrazione sui tuoi voti reali
     "calib_min_obs": 5,          # osservazioni minime per ruolo prima di applicare una correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
@@ -334,8 +337,10 @@ def odds_to_lambdas(ev):
     return {"lh": lh, "la": la, "p1": float(p1), "px": float(px), "p2": float(p2), "n_book": len(P)}
 
 
-def _http_json(url, timeout=25, headers_out=None):
-    req = urllib.request.Request(url, headers={"User-Agent": "fanta-predictor"})
+def _http_json(url, timeout=25, headers_out=None, headers=None):
+    hdrs = {"User-Agent": "fanta-predictor"}
+    hdrs.update(headers or {})
+    req = urllib.request.Request(url, headers=hdrs)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         if headers_out is not None:
             headers_out.update({k.lower(): v for k, v in r.headers.items()})
@@ -383,6 +388,58 @@ def attach_odds(events, titles):
     if unknown:
         print("  ! quote: squadre non riconosciute:", ", ".join(sorted(unknown)))
     return out
+
+
+# ------------------------------------------------------------- INFORTUNI ---
+API_FOOTBALL = "https://v3.football.api-sports.io"
+
+
+def fetch_injuries(api_key, season, dates, cache_dir=".cache_fanta"):
+    """Infortunati/squalificati/in dubbio da API-Football (una chiamata per data di gioco). Facoltativo."""
+    cache = Path(cache_dir)
+    cache.mkdir(exist_ok=True)
+    f = cache / f"injuries_{season}.json"
+    store = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    out = []
+    for d in sorted(set(dates)):
+        ent = store.get(d)
+        if ent and (time.time() - ent["t"]) < CFG["injuries_cache_hours"] * 3600:
+            out += ent["r"]
+            continue
+        data = _http_json(f"{API_FOOTBALL}/injuries?league=135&season={season}&date={d}",
+                          headers={"x-apisports-key": api_key})
+        errs = data.get("errors")
+        if errs:                                   # API-Sports risponde 200 anche in caso di errore
+            msg = "; ".join(f"{k}: {v}" for k, v in errs.items()) if isinstance(errs, dict) else "; ".join(map(str, errs))
+            raise RuntimeError(msg)
+        store[d] = {"t": time.time(), "r": data.get("response", [])}
+        out += store[d]["r"]
+    f.write_text(json.dumps(store), encoding="utf-8")
+    return out
+
+
+def normalize_injuries(raw, titles):
+    """Lista di {team, tokens, type, reason} con squadra in nome Understat."""
+    out = []
+    for e in raw or []:
+        pl, tm = e.get("player") or {}, e.get("team") or {}
+        team = resolve_team(tm.get("name", ""), titles) if tm.get("name") else None
+        if not team or not pl.get("name"):
+            continue
+        out.append({"team": team, "tokens": set(tokens(pl["name"])), "type": str(pl.get("type") or ""),
+                    "reason": str(pl.get("reason") or "").strip()})
+    return out
+
+
+def find_injury(names, team, inj):
+    for name in names:
+        longs = [t for t in tokens(name) if len(t) > 1]
+        if not longs:
+            continue
+        for e in inj:
+            if e["team"] == team and all(t in e["tokens"] for t in longs):
+                return e
+    return None
 
 
 # ============================================================== GIOCATORI ===
@@ -549,7 +606,7 @@ def best_lineup(df, modules=None):
 
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
-        odds_events=None, calib=None, odds_note=None):
+        odds_events=None, calib=None, odds_note=None, inj_key=None):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
     matches_all = prov.matches(season)
@@ -590,6 +647,18 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
         fx[a] = (h, False, when_local, played)
     n_played = sum(1 for v in fx.values() if v[3]) // 2
     odds_map = {} if backtest else attach_odds(odds_events, titles)
+    inj_list, inj_msg, n_inj = [], ("non usati (backtest)" if backtest else "non attivi: manca il secret API_FOOTBALL_KEY"), 0
+    if inj_key and not backtest and not check_only:
+        try:
+            raw_inj = fetch_injuries(inj_key, season, {m["datetime"][:10] for m in fixtures})
+            inj_list = normalize_injuries(raw_inj, titles)
+            inj_msg = "attivi"
+        except Exception as e:  # noqa: BLE001
+            msg = str(e).replace(inj_key, "***")
+            hint = " (il piano gratuito potrebbe non coprire la stagione in corso: usa gli slider)" \
+                if ("plan" in msg.lower() or "season" in msg.lower()) else ""
+            inj_msg = f"non attivi: {msg[:110]}{hint}"
+            print(f"  ! infortuni non disponibili ({msg})")
     tag = " [BACKTEST: solo dati precedenti]" if backtest else ""
     print(f"Giornata {rno}: {len(fixtures)} partite dal {to_local(fixtures[0]['datetime']):%Y-%m-%d %H:%M} (ora italiana) "
           f"({n_played} gia' iniziate/giocate){tag}")
@@ -634,6 +703,20 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
                                   if hit.id in cards_all.index else None)
             nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
                     "pochi dati" if prof["n_matches"] < 5 else "")
+        if inj_list:
+            e = find_injury([r.nome] + ([override] if override else []), team, inj_list)
+            if e:
+                n_inj += 1
+                why = e["reason"] or e["type"]
+                if "suspen" in why.lower() or "red card" in why.lower():
+                    why = "squalificato"
+                if e["type"].lower().startswith("missing"):
+                    avail = False
+                    nota = (nota + " - " if nota else "") + f"ASSENTE: {why}"
+                else:
+                    prof["p_start"] *= CFG["doubt_factor"]
+                    prof["p_sub"] *= CFG["doubt_factor"]
+                    nota = (nota + " - " if nota else "") + f"in dubbio: {why}"
         if played:
             nota = (nota + " - " if nota else "") + "partita gia' iniziata/giocata"
         odds = odds_map.get((team, opp) if home else (opp, team))
@@ -665,7 +748,9 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             odds_msg += f" ({len(odds_events)} eventi ricevuti; le partite gia' iniziate non hanno quote)"
         if odds_note:
             odds_msg += f" - {odds_note}"
-    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg}
+    if inj_msg == "attivi":
+        inj_msg = f"attivi ({n_inj} segnalazioni sulla tua rosa)"
+    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg}
     if check_only:
         return None, None, problems, info
     return pd.DataFrame(rows), fixtures, problems, info
@@ -908,7 +993,7 @@ if (D.calib && D.calib.n > 0) { const C = document.getElementById("cal"), c = D.
     "; prevedere la media del ruolo darebbe " + c.mae_media_ruolo.toFixed(2) + "." + (c.mae_media_giocatore != null ?
     " Su chi ha storico: modello " + c.mae_modello_sub.toFixed(2) + " contro " + c.mae_media_giocatore.toFixed(2) + " usando la media dei suoi ultimi fantavoti." : "")));
   C.appendChild(mk("div", "info", c.n < 60 ? "Campione ancora piccolo: prendi questi numeri come indicativi." : "")); }
-document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg;
+document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg + " \u00b7 infortuni: " + D.inj_msg;
 document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
 build(); update();
@@ -931,6 +1016,7 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
         "gno": info.get("rno", 0),
         "odds": info.get("odds", 0),
         "odds_msg": info.get("odds_msg", "non attive"),
+        "inj_msg": info.get("inj_msg", "non attivi"),
         "partite": info.get("partite", len(fixtures)),
         "agg": f"{now:%d/%m/%Y %H:%M}",
         "calib": rep if rep and rep.get("n", 0) > 0 else None,
@@ -1003,8 +1089,11 @@ def main(argv=None):
         odds_note = "non attive: manca il secret ODDS_API_KEY"
         print("Quote bookmaker: nessuna ODDS_API_KEY impostata, uso solo xG.")
 
+    inj_key = os.environ.get("API_FOOTBALL_KEY", "").strip() or None
+    if inj_key:
+        print(f"API_FOOTBALL_KEY trovata ({len(inj_key)} caratteri)")
     df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
-                                       odds_events=odds_events, odds_note=odds_note)
+                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key)
     if a.check or df is None:
         return
     Path(a.storico).mkdir(parents=True, exist_ok=True)
