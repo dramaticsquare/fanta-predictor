@@ -1,0 +1,57 @@
+# VOTI REALI DELLA TUA LEGA - servono alla calibrazione del modello.
+# Formato: un blocco per giornata. Riga "# giornata: N" (N = numero della giornata di Serie A),
+# poi una riga per giocatore: nome, voto, fantavoto (come nell'app; "-" o "sv" = senza voto).
+# I nomi devono essere uguali a quelli di rosa.csv. Giornate 3 e 4 trascritte dagli screenshot: controlla qualche riga.
+giocatore,voto,fantavoto
+
+# --- Giornata 3: Berlusca F.C. - ADHD Ringo 4-2 (88.5 - 74) ---
+# giornata: 3
+Maignan,6,5
+Mancini,5,5
+Ramon,6,6
+Miranda J.,6.5,7.5
+Wesley,7,7
+Conceicao,6.5,7.5
+Lobotka,6.5,6.5
+Cristante,6,6
+Laurientè,6.5,6.5
+Hojlund,7,10
+De Ketelaere,6,6
+Falcone,6.5,5
+Diego Carlos,5.5,5.5
+Lucumì,6.5,6.5
+Bernabè,-,-
+Pulisic,-,-
+Alajbegovic,5.5,5.5
+Maldini,7,11
+Stulic,5.5,5.5
+Badiashile,5,5
+Liberali,sv,sv
+Torriani,-,-
+Gabbia,-,-
+
+# --- Giornata 4: ADHD Ringo - Roggers FC 1-1 (69.5 - 70.5) ---
+# giornata: 4
+Maignan,6.5,4.5
+Mancini,7,7
+Ramon,7,10
+Lucumì,6,5.5
+Wesley,-,-
+Conceicao,5.5,5.5
+Alajbegovic,6,6
+Cristante,6,6
+Laurientè,6.5,7.5
+Hojlund,5.5,5.5
+De Ketelaere,5,5
+Falcone,5.5,3.5
+Miranda J.,5.5,5.5
+Diego Carlos,5.5,5.5
+Lobotka,7.5,11.5
+Pulisic,6.5,7
+Liberali,-,-
+Maldini,7,10
+Stulic,6,6
+Badiashile,-,-
+Bernabè,6,6
+Torriani,-,-
+Gabbia,-,-

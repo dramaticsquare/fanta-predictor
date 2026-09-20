@@ -23,12 +23,17 @@ import argparse
 import difflib
 import html
 import json
+import math
+import os
 import re
 import sys
 import time
 import unicodedata
+import urllib.parse
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -57,8 +62,17 @@ CFG = {
     "starter_minutes": 60,
     "sub_weight": 0.4,           # quanto conta una presenza da subentrato
     "min_play_prob": 0.25,       # sotto questa soglia il giocatore non entra in formazione (se ce ne sono altri)
-    # voto 1-10:  5 + slope * (fantavoto - fantavoto di un giocatore medio del ruolo in partita neutra)
-    "rating_slope": 2.0,
+    # voto previsto = center + slope * (fantavoto - fantavoto di un giocatore medio del ruolo in partita neutra)
+    # center 6.0: come i voti veri del fantacalcio (nei tuoi screenshot la media dei voti e' ~6,1)
+    "rating_center": 6.0,
+    "rating_slope": 1.5,
+    # quote dei bookmaker (The Odds API): peso dei gol attesi impliciti nelle quote rispetto al solo xG
+    "odds_weight": 0.6,          # [EURISTICA]
+    "odds_cache_hours": 3,       # risparmia crediti del piano gratuito
+    # calibrazione sui tuoi voti reali
+    "calib_min_obs": 5,          # osservazioni minime per ruolo prima di applicare una correzione
+    "calib_shrink": 20,          # piu' alto = correzione piu' prudente
+    "tz": "Europe/Rome",
     "cache_hours": 12,
 }
 
@@ -70,6 +84,10 @@ TEAM_ALIAS = {
     "parma": "Parma Calcio 1913",
     "hellas verona": "Verona",
     "verona": "Verona",
+    "ac milan": "AC Milan",
+    "inter milan": "Inter",
+    "internazionale": "Inter",
+    "as roma": "Roma",
 }
 
 POS_MAP = {"GK": "P", "D": "D", "M": "C", "F": "A"}
@@ -149,8 +167,9 @@ class UnderstatProvider:
 
 
 # ============================================================== SQUADRE =====
-def build_team_history(prov, season):
-    """dict titolo -> DataFrame (date, h_a, xG, xGA) ordinato per data, ultime 2 stagioni."""
+def build_team_history(prov, season, cutoff=None):
+    """dict titolo -> DataFrame (date, h_a, xG, xGA) ordinato per data, ultime 2 stagioni.
+    cutoff (datetime): per il backtest, tiene solo le partite PRECEDENTI."""
     frames, current = {}, set()
     for s in (season - 1, season):
         try:
@@ -166,6 +185,10 @@ def build_team_history(prov, season):
                 continue
             df = num(df, ["xG", "xGA"])
             df["date"] = pd.to_datetime(df["date"])
+            if cutoff is not None:
+                df = df[df["date"] < cutoff]
+            if df.empty:
+                continue
             frames.setdefault(t["title"], []).append(df[["date", "h_a", "xG", "xGA"]])
     return {k: pd.concat(v).sort_values("date").reset_index(drop=True)
             for k, v in frames.items() if not current or k in current}
@@ -187,42 +210,167 @@ def team_strengths(hist):
     return rows, lg, hf, af
 
 
-def team_ctx(team, opp, is_home, S, lg, hf, af):
+def team_ctx(team, opp, is_home, S, lg, hf, af, odds=None):
     a_own, d_own = (S.get(team) or {"A": 1, "D": 1})["A"], (S.get(team) or {"A": 1, "D": 1})["D"]
     a_opp, d_opp = (S.get(opp) or {"A": 1, "D": 1})["A"], (S.get(opp) or {"A": 1, "D": 1})["D"]
     venue_att = hf if is_home else af
     venue_def = af if is_home else hf            # chi subisce in casa incassa "xG trasferta"
-    return {
-        "att_factor": d_opp * venue_att,                  # moltiplica le stat offensive del giocatore
-        "lam_for": lg * a_own * d_opp * venue_att,        # xG attesi della sua squadra
-        "lam_conc": lg * a_opp * d_own * venue_def,       # xG attesi subiti
-    }
+    att_factor = d_opp * venue_att               # moltiplica le stat offensive del giocatore
+    lam_for = lg * a_own * d_opp * venue_att     # xG attesi della sua squadra
+    lam_conc = lg * a_opp * d_own * venue_def    # xG attesi subiti
+    src = "xG"
+    if odds:                                     # mescola con i gol attesi impliciti nelle quote
+        o_for, o_conc = (odds["lh"], odds["la"]) if is_home else (odds["la"], odds["lh"])
+        w = CFG["odds_weight"]
+        new_for, new_conc = w * o_for + (1 - w) * lam_for, w * o_conc + (1 - w) * lam_conc
+        att_factor *= new_for / max(lam_for, 0.05)
+        lam_for, lam_conc, src = new_for, new_conc, "xG+quote"
+    return {"att_factor": att_factor, "lam_for": lam_for, "lam_conc": lam_conc, "src": src}
 
 
-def current_round(matches, now):
-    """Giornata in corso (o la prossima), COMPLETA: include anche le partite gia' giocate, cosi' non
-    spariscono le squadre che hanno gia' giocato venerdi'/sabato. Le partite ordinate per data vengono
-    divise in giornate: una nuova giornata inizia quando una squadra compare per la seconda volta."""
+# ------------------------------------------------------------- GIORNATE -----
+def split_rounds(matches):
+    """Divide il calendario in giornate: ordinate per data, una nuova giornata inizia quando una
+    squadra compare per la seconda volta. Ritorna [(numero, [partite])]; i gruppi con meno di 5
+    partite (recuperi) hanno numero 0."""
     ms = sorted(matches, key=lambda m: m["datetime"])
-    dts = [datetime.fromisoformat(m["datetime"]) for m in ms]
     groups, cur, seen = [], [], set()
-    for i, m in enumerate(ms):
+    for m in ms:
         t = {m["h"]["title"], m["a"]["title"]}
         if t & seen:
             groups.append(cur)
             cur, seen = [], set()
-        cur.append(i)
+        cur.append(m)
         seen |= t
     if cur:
         groups.append(cur)
-    start = next((i for i, m in enumerate(ms)
-                  if not m.get("isResult") and dts[i] >= now - timedelta(days=2)), None)
-    if start is None:
-        return []
+    out, n = [], 0
     for g in groups:
-        if start in g:
-            return [ms[i] for i in g]
+        if len(g) >= 5:
+            n += 1
+            out.append((n, g))
+        else:
+            out.append((0, g))
+    return out
+
+
+def current_round(matches, now):
+    """Giornata in corso (o la prossima), COMPLETA: include anche le partite gia' giocate."""
+    for no, g in split_rounds(matches):
+        if any((not m.get("isResult")) and datetime.fromisoformat(m["datetime"]) >= now - timedelta(days=2)
+               for m in g):
+            return no, g
+    return 0, []
+
+
+def get_round(matches, no):
+    for n, g in split_rounds(matches):
+        if n == no:
+            return g
     return []
+
+
+# ------------------------------------------------------------- QUOTE --------
+FACT = np.array([math.factorial(i) for i in range(16)], dtype=float)
+
+
+def _pmf(lam, n=12):
+    k = np.arange(n + 1)
+    return np.exp(-lam) * lam ** k / FACT[: n + 1]
+
+
+def fit_lambdas(p1, px, p2, p_over=None, line=2.5):
+    """Trova i gol attesi (casa, trasferta) di due Poisson indipendenti che riproducono le
+    probabilita' 1X2 (e, se c'e', la probabilita' di Over) ricavate dalle quote."""
+    k = int(math.floor(line))
+
+    def loss(lh, la):
+        M = np.outer(_pmf(lh), _pmf(la))
+        v = (np.tril(M, -1).sum() - p1) ** 2 + (np.trace(M) - px) ** 2 + (np.triu(M, 1).sum() - p2) ** 2
+        if p_over is not None:
+            v += (1 - _pmf(lh + la, 14)[: k + 1].sum() - p_over) ** 2
+        return v
+
+    best = (9.0, 1.4, 1.1)
+    for lh in np.arange(0.2, 3.61, 0.1):
+        for la in np.arange(0.2, 3.61, 0.1):
+            v = loss(lh, la)
+            if v < best[0]:
+                best = (v, lh, la)
+    _, bh, ba = best
+    for lh in np.arange(max(bh - 0.1, 0.05), bh + 0.101, 0.02):
+        for la in np.arange(max(ba - 0.1, 0.05), ba + 0.101, 0.02):
+            v = loss(lh, la)
+            if v < best[0]:
+                best = (v, lh, la)
+    return float(best[1]), float(best[2])
+
+
+def odds_to_lambdas(ev):
+    """Da un evento The Odds API a gol attesi. Media dei bookmaker dopo aver tolto il margine."""
+    h, a = ev["home_team"], ev["away_team"]
+    P, over = [], []
+    for bk in ev.get("bookmakers", []):
+        for mk in bk.get("markets", []):
+            if mk["key"] == "h2h":
+                d = {o["name"]: o["price"] for o in mk["outcomes"]}
+                if h in d and a in d and "Draw" in d:
+                    inv = np.array([1 / d[h], 1 / d["Draw"], 1 / d[a]])
+                    P.append(inv / inv.sum())
+            elif mk["key"] == "totals":
+                o = [x for x in mk["outcomes"] if x["name"] == "Over" and abs(float(x.get("point", 0)) - 2.5) < 1e-9]
+                u = [x for x in mk["outcomes"] if x["name"] == "Under" and abs(float(x.get("point", 0)) - 2.5) < 1e-9]
+                if o and u:
+                    io, iu = 1 / o[0]["price"], 1 / u[0]["price"]
+                    over.append(io / (io + iu))
+    if not P:
+        return None
+    p1, px, p2 = np.mean(P, axis=0)
+    lh, la = fit_lambdas(p1, px, p2, float(np.mean(over)) if over else None)
+    return {"lh": lh, "la": la, "p1": float(p1), "px": float(px), "p2": float(p2), "n_book": len(P)}
+
+
+def _http_json(url, timeout=25):
+    req = urllib.request.Request(url, headers={"User-Agent": "fanta-predictor"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def fetch_odds(api_key, cache_dir=".cache_fanta"):
+    """Quote Serie A da The Odds API (piano gratuito). Cache di poche ore per risparmiare crediti."""
+    cache = Path(cache_dir)
+    cache.mkdir(exist_ok=True)
+    f = cache / "odds.json"
+    if f.exists() and (time.time() - f.stat().st_mtime) < CFG["odds_cache_hours"] * 3600:
+        return json.loads(f.read_text(encoding="utf-8"))
+    base = "https://api.the-odds-api.com/v4/sports"
+    sports = _http_json(f"{base}/?apiKey={urllib.parse.quote(api_key)}")          # chiamata gratuita
+    keys = [s["key"] for s in sports]
+    key = "soccer_italy_serie_a" if "soccer_italy_serie_a" in keys else next(
+        (k for k in keys if "italy" in k and "serie_a" in k), None)
+    if not key:
+        raise RuntimeError("campionato Serie A non presente nell'elenco dell'API quote")
+    last = None
+    for markets in ("h2h,totals", "h2h"):                                        # totals: se non disponibile, solo 1X2
+        try:
+            data = _http_json(f"{base}/{key}/odds/?regions=eu&markets={markets}&oddsFormat=decimal"
+                              f"&apiKey={urllib.parse.quote(api_key)}")
+            f.write_text(json.dumps(data), encoding="utf-8")
+            return data
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise last
+
+
+def attach_odds(events, titles):
+    """(casa, trasferta) con nomi Understat -> gol attesi dalle quote."""
+    out = {}
+    for ev in events or []:
+        h, a = resolve_team(ev["home_team"], titles), resolve_team(ev["away_team"], titles)
+        lam = odds_to_lambdas(ev) if h and a else None
+        if lam:
+            out[(h, a)] = lam
+    return out
 
 
 # ============================================================== GIOCATORI ===
@@ -330,7 +478,7 @@ def player_profile(pm, team, team_hist, role, priors, cards):
 
 
 def fv_ref(role, pr, lg):
-    """Fantavoto di un giocatore MEDIO del ruolo in una partita neutra (definisce il '5' del voto 1-10)."""
+    """Fantavoto di un giocatore MEDIO del ruolo in una partita neutra (definisce il '6' del voto previsto)."""
     fv = CFG["base_vote"] + CFG["goal"] * pr["xG"] + CFG["assist"] * pr["xA"]
     fv += CFG["yellow"] * pr["yellow_cards"] + CFG["red"] * pr["red_cards"]
     fv += CFG["clean_sheet"][role] * float(np.exp(-lg))
@@ -339,23 +487,27 @@ def fv_ref(role, pr, lg):
     return fv
 
 
-def project(role, prof, ctx, ref):
+def project(role, prof, ctx, ref, off=0.0):
+    """off = correzione per ruolo ricavata dalla calibrazione sui voti reali (0 se non disponibile)."""
     m = prof["exp_min"] / 90
     e_g = prof["xg90"] * ctx["att_factor"] * m
     e_a = prof["xa90"] * ctx["att_factor"] * m
     p_cs = float(np.exp(-ctx["lam_conc"]))
-    fv = CFG["base_vote"]
-    fv += CFG["goal"] * e_g + CFG["assist"] * e_a
-    fv += CFG["yellow"] * prof["yc90"] * m + CFG["red"] * prof["rc90"] * m
-    fv += CFG["clean_sheet"][role] * p_cs
+    fv_raw = CFG["base_vote"]
+    fv_raw += CFG["goal"] * e_g + CFG["assist"] * e_a
+    fv_raw += CFG["yellow"] * prof["yc90"] * m + CFG["red"] * prof["rc90"] * m
+    fv_raw += CFG["clean_sheet"][role] * p_cs
     if role == "P":
-        fv += CFG["conceded_gk"] * ctx["lam_conc"]
+        fv_raw += CFG["conceded_gk"] * ctx["lam_conc"]
     if role in ("D", "C"):
-        fv += CFG["involvement_weight"] * prof["z_bu"]
-    rating = float(np.clip(5 + CFG["rating_slope"] * (fv - ref), 1, 10))
+        fv_raw += CFG["involvement_weight"] * prof["z_bu"]
+    fv = fv_raw + off
+    # voto previsto: 6 = giocatore medio del ruolo in partita neutra (come i voti veri del fantacalcio)
+    rating = float(np.clip(CFG["rating_center"] + CFG["rating_slope"] * (fv_raw - ref), 1, 10))
     p_eff = min(1.0, prof["p_start"] + CFG["sub_weight"] * prof["p_sub"])
-    ev = p_eff * fv + (1 - p_eff) * ref            # se non gioca, entra in media un sostituto "medio"
-    return {"e_g": e_g, "e_a": e_a, "p_cs": p_cs, "fv": fv, "rating": rating, "p_eff": p_eff, "ev": ev}
+    ev = p_eff * fv + (1 - p_eff) * (ref + off)     # se non gioca, entra in media un sostituto "medio"
+    return {"e_g": e_g, "e_a": e_a, "p_cs": p_cs, "fv": fv, "fv_raw": fv_raw, "rating": rating,
+            "p_eff": p_eff, "ev": ev}
 
 
 # ============================================================== FORMAZIONE ==
@@ -384,10 +536,23 @@ def best_lineup(df, modules=None):
 
 
 # ============================================================== PIPELINE ====
-def run(prov, roster, season, now, check_only=False):
+def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
+        odds_events=None, calib=None):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
-    hist = build_team_history(prov, season)
+    matches_all = prov.matches(season)
+    if round_no:
+        rno, fixtures = round_no, get_round(matches_all, round_no)
+    else:
+        rno, fixtures = current_round(matches_all, now)
+    if not fixtures:
+        sys.exit("Nessuna partita trovata su Understat per la giornata richiesta "
+                 "(stagione finita, non ancora pubblicata o numero errato).")
+    cutoff = datetime.fromisoformat(fixtures[0]["datetime"]) if backtest else None
+    if backtest:
+        now = cutoff
+
+    hist = build_team_history(prov, season, cutoff)
     S, lg, hf, af = team_strengths(hist)
     pcur = pd.DataFrame(prov.players(season))
     try:
@@ -402,18 +567,23 @@ def run(prov, roster, season, now, check_only=False):
     cards_all = pd.concat([pcur, pold]).groupby("id").agg(time=("time", "sum"), y=("yellow_cards", "sum"),
                                                           r=("red_cards", "sum"))
     titles = list(hist.keys())
+    off = (calib or {}).get("offset", {})
 
-    fixtures = current_round(prov.matches(season), now)
-    if not fixtures:
-        sys.exit("Nessuna partita in programma trovata su Understat (stagione finita o non ancora pubblicata).")
     fx = {}
     for m in fixtures:
         h, a = m["h"]["title"], m["a"]["title"]
-        played = bool(m.get("isResult")) or datetime.fromisoformat(m["datetime"]) < now
+        played = (not backtest) and (bool(m.get("isResult")) or datetime.fromisoformat(m["datetime"]) < now)
         fx[h] = (a, True, m["datetime"], played)
         fx[a] = (h, False, m["datetime"], played)
     n_played = sum(1 for v in fx.values() if v[3]) // 2
-    print(f"Giornata: {len(fixtures)} partite dal {fixtures[0]['datetime'][:16]} ({n_played} gia' iniziate/giocate)")
+    odds_map = {} if backtest else attach_odds(odds_events, titles)
+    tag = " [BACKTEST: solo dati precedenti]" if backtest else ""
+    print(f"Giornata {rno}: {len(fixtures)} partite dal {fixtures[0]['datetime'][:16]} "
+          f"({n_played} gia' iniziate/giocate){tag}")
+    if odds_events is not None and not backtest:
+        print(f"Quote bookmaker trovate per {len(odds_map)}/{len(fixtures)} partite")
+    if any(abs(v) > 1e-9 for v in off.values()):
+        print("Correzione calibrazione per ruolo:", {k: round(v, 2) for k, v in off.items()})
 
     rows, problems = [], []
     for r in roster.itertuples():
@@ -445,46 +615,149 @@ def run(prov, roster, season, now, check_only=False):
             nota = "nessun dato Understat: usa lo slider"
         else:
             pm = prov.player_matches(hit.id)
+            if backtest:
+                pm = [x for x in pm if str(x["date"])[:10] < cutoff.strftime("%Y-%m-%d")]
             prof = player_profile(pm, team, hist, role, priors, cards_all.loc[hit.id].to_dict()
                                   if hit.id in cards_all.index else None)
             nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
                     "pochi dati" if prof["n_matches"] < 5 else "")
         if played:
             nota = (nota + " - " if nota else "") + "partita gia' iniziata/giocata"
-        ctx = team_ctx(team, opp, home, S, lg, hf, af)
-        pj = project(role, prof, ctx, refs[role])
+        odds = odds_map.get((team, opp) if home else (opp, team))
+        ctx = team_ctx(team, opp, home, S, lg, hf, af, odds)
+        pj = project(role, prof, ctx, refs[role], off.get(role, 0.0))
         rows.append({
             "Giocatore": r.nome, "Squadra": r.squadra, "Ruolo": role, "Disp": avail,
             "Avversario": f"{'vs' if home else '@'} {opp}", "Data": f"{when[8:10]}/{when[5:7]}",
             "xG": round(pj["e_g"], 2), "xA": round(pj["e_a"], 2),
+            "P_gol": round(100 * (1 - math.exp(-pj["e_g"]))), "P_ass": round(100 * (1 - math.exp(-pj["e_a"]))),
             "CS%": round(100 * pj["p_cs"]) if role in "PD" else None,
             "Titolare%": round(100 * pj["p_eff"]),
-            "Fantavoto": round(pj["fv"], 2), "Voto": round(pj["rating"], 1), "EV": round(pj["ev"], 2),
-            "Rif": round(refs[role], 3), "Nota": nota,
+            "Fantavoto": round(pj["fv"], 2), "FV_raw": round(pj["fv_raw"], 3),
+            "Voto": round(pj["rating"], 1), "EV": round(pj["ev"], 2), "Rif": round(refs[role] + off.get(role, 0.0), 3),
+            "GolSq": round(ctx["lam_for"], 2), "GolOpp": round(ctx["lam_conc"], 2), "Fonte": ctx["src"],
+            "Nota": nota,
         })
     if problems:
         print("\nATTENZIONE:")
         for p in problems:
             print("  -", p)
+    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures)}
     if check_only:
-        return None, None, problems
-    return pd.DataFrame(rows), fixtures, problems
+        return None, None, problems, info
+    return pd.DataFrame(rows), fixtures, problems, info
+
+
+def save_predictions(df, info, fixtures, now, storico, force=False):
+    """Salva le previsioni GREZZE (senza correzione) della giornata, finche' non inizia: servono alla calibrazione."""
+    rno = info["rno"]
+    if rno <= 0:
+        return None
+    kickoff = datetime.fromisoformat(fixtures[0]["datetime"])
+    if not force and now >= kickoff:
+        return None                      # giornata gia' iniziata: non sovrascrivo le previsioni pre-partita
+    d = Path(storico)
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"G{rno:02d}.csv"
+    df[["Giocatore", "Ruolo", "Squadra", "Avversario", "FV_raw", "Fantavoto", "Titolare%", "EV"]].to_csv(f, index=False)
+    return f
+
+
+# ============================================================== CALIBRAZIONE =
+def read_voti(path):
+    """voti_reali.csv: blocchi '# giornata: N' seguiti da righe 'giocatore,voto,fantavoto'.
+    '-' o 'sv' = senza voto (ignorato)."""
+    rows, g, bad = [], None, 0
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.lower().startswith("giocatore"):
+            continue
+        m = re.match(r"^#\s*giornata\s*[:=]?\s*(\d+)", line, re.I)
+        if m:
+            g = int(m.group(1))
+            continue
+        if line.startswith("#"):
+            continue
+        p = [x.strip() for x in line.split(",")]
+        if len(p) < 3:
+            continue
+        try:
+            fv = float(p[2].replace(",", "."))
+        except ValueError:
+            continue
+        if not g:
+            bad += 1
+            continue
+        rows.append({"giornata": g, "Giocatore": p[0], "Reale": fv})
+    if bad:
+        print(f"  ! {bad} righe di {path} ignorate: manca il numero di giornata ('# giornata: N')")
+    return pd.DataFrame(rows, columns=["giornata", "Giocatore", "Reale"])
+
+
+def calibra(storico_dir, voti_path, out_json):
+    out = {"aggiornato": datetime.now().strftime("%Y-%m-%d %H:%M"), "offset": {r: 0.0 for r in "PDCA"}, "report": {"n": 0}}
+    frames = []
+    for f in sorted(Path(storico_dir).glob("G*.csv")):
+        d = pd.read_csv(f)
+        d["giornata"] = int(re.findall(r"\d+", f.stem)[0])
+        frames.append(d)
+    if not frames or not Path(voti_path).exists():
+        print("Calibrazione: mancano previsioni salvate o voti reali, nessuna correzione applicata.")
+        Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+        return out
+    pred, real = pd.concat(frames), read_voti(voti_path)
+    df = pred.merge(real, on=["giornata", "Giocatore"], how="inner")
+    if df.empty:
+        print("Calibrazione: nessun giocatore in comune fra previsioni e voti reali.")
+        Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+        return out
+    df["err"] = df["FV_raw"] - df["Reale"]
+    rep = {"n": int(len(df)), "giornate": sorted(int(x) for x in df.giornata.unique()),
+           "mae_modello": float(df.err.abs().mean()), "bias": {}, "n_ruolo": {}}
+    # baseline 1: media reale del ruolo
+    rep["mae_media_ruolo"] = float((df.Reale - df.groupby("Ruolo").Reale.transform("mean")).abs().mean())
+    # baseline 2: media dei suoi altri fantavoti reali (leave-one-out), solo chi ha >= 2 osservazioni
+    g = df.groupby("Giocatore").Reale
+    cnt, tot = g.transform("count"), g.transform("sum")
+    sub = df[cnt >= 2].copy()
+    if len(sub):
+        loo = (tot[cnt >= 2] - sub.Reale) / (cnt[cnt >= 2] - 1)
+        rep["n_sub"] = int(len(sub))
+        rep["mae_modello_sub"] = float(sub.err.abs().mean())
+        rep["mae_media_giocatore"] = float((sub.Reale - loo).abs().mean())
+    cs = []
+    for role, gr in df.groupby("Ruolo"):
+        n = len(gr)
+        bias = float(gr.err.mean())
+        rep["bias"][role], rep["n_ruolo"][role] = round(bias, 3), int(n)
+        if n >= CFG["calib_min_obs"]:
+            out["offset"][role] = round(-bias * n / (n + CFG["calib_shrink"]), 3)
+        if n >= 5:
+            cs.append(gr["FV_raw"].rank().corr(gr["Reale"].rank()))
+    rep["spearman_ruolo"] = float(np.nanmean(cs)) if cs else None
+    out["report"] = rep
+    Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+    print(f"Calibrazione su {rep['n']} prestazioni reali, giornate {rep['giornate']}")
+    print(f"  errore medio modello (MAE): {rep['mae_modello']:.2f}   media del ruolo: {rep['mae_media_ruolo']:.2f}")
+    if "mae_media_giocatore" in rep:
+        print(f"  (su {rep['n_sub']} righe con storico) modello {rep['mae_modello_sub']:.2f} "
+              f"vs media dei suoi fantavoti {rep['mae_media_giocatore']:.2f}")
+    print(f"  scarto medio per ruolo (previsto - reale): {rep['bias']}")
+    print(f"  correzione applicata: {out['offset']}   (prudente: si attenua con pochi dati)")
+    return out
 
 
 # ============================================================== OUTPUT ======
-def color(v):
-    v = max(1, min(10, v))
-    hue = 120 * (v - 1) / 9          # rosso -> verde
-    return f"hsl({hue:.0f},60%,42%)"
-
-
 HTML_TEMPLATE = r"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Fanta Predictor</title>
 <style>
 :root{--bg:#fff;--fg:#111;--mut:#777;--card:#f3f4f6;--line:#0002;--acc:#2563eb}
 @media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#eee;--mut:#999;--card:#1c1f27;--line:#fff2;--acc:#60a5fa}}
-*{box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:12px;background:var(--bg);color:var(--fg);max-width:720px;margin:auto}
-h1{font-size:20px;margin:4px 0}h2{font-size:15px;margin:18px 0 8px}.s{color:var(--mut);font-size:12px}
+*{box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:0 12px 24px;background:var(--bg);color:var(--fg);max-width:720px;margin:auto}
+h1{font-size:20px;margin:12px 0 2px}h2{font-size:15px;margin:18px 0 8px}.s{color:var(--mut);font-size:12px}
+#bar{position:sticky;top:0;z-index:10;background:var(--bg);padding:8px 0 7px;border-bottom:1px solid var(--line);margin-top:8px}
+.bh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}.bh b{font-size:14px;flex:1;min-width:120px}
+.mini div{font-size:12.5px;line-height:1.4}.mini i{font-style:normal;font-weight:700;color:var(--acc);margin-right:4px}
 .card{background:var(--card);border-radius:12px;padding:10px 12px;margin-bottom:10px}
 .ln{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:14px;flex-wrap:wrap}
 .ln b{min-width:16px}.tag{font-size:12px;color:var(--mut)}
@@ -493,38 +766,45 @@ h1{font-size:20px;margin:4px 0}h2{font-size:15px;margin:18px 0 8px}.s{color:var(
 .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .nm{font-weight:600}.r{font-size:11px;padding:1px 6px;border-radius:8px;background:var(--line);margin-right:6px}
 .badge{color:#fff;font-weight:700;border-radius:8px;padding:3px 9px;font-size:14px;min-width:40px;text-align:center}
-.info{font-size:12px;color:var(--mut);margin:3px 0 6px}
+.info{font-size:12px;color:var(--mut);margin:3px 0 0}.info2{font-size:12px;color:var(--mut);margin:0 0 6px}
 .ctl{display:flex;align-items:center;gap:10px}
 input[type=range]{flex:1;accent-color:var(--acc)}
 .pv{font-size:13px;min-width:74px;text-align:right}.chg{color:var(--acc);font-weight:600}
 label.o{font-size:12px;white-space:nowrap}
-button{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:13px}
+button,select{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:7px 11px;font-size:13px}
+select{background:var(--card);color:var(--fg);border:1px solid var(--line)}
 </style></head><body>
 <h1>Fanta Predictor</h1>
 <div class="s" id="meta"></div>
-<h2 id="lt">Formazione consigliata</h2><div class="card" id="lineup"></div>
+<div id="bar">
+  <div class="bh"><b id="lt">Formazione</b>
+    <select id="mod" aria-label="Modulo"></select><button id="copy">Copia</button></div>
+  <div class="mini" id="mini"></div>
+</div>
+<h2>Dettaglio formazione</h2><div class="card" id="lineup"></div>
 <h2>Panchina (in ordine)</h2><div class="card" id="bench"></div>
 <div id="probs" class="card" style="display:none"></div>
+<div id="cal" class="card" style="display:none"></div>
 <h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
 <div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
 <div id="roster"></div>
-<p class="s">Voto 1-10: 5 = giocatore medio del ruolo in partita neutra; +0,5 fantavoto = +1 voto. Vale SE il giocatore scende in campo (non cambia con lo slider). Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
+<p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
 <script>
 const D = __DATA__;
-const KEY = "fanta_v1_" + D.giornata;
+const KEY = "fanta_v2_" + D.giornata;
 let saved = {};
 try { saved = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
+let modSel = saved._mod || "auto", cur = null, inSet = new Set();
 const S = D.players.map(p => Object.assign({}, p, {
   p0: p["Titolare%"], p: (saved[p.Giocatore] && saved[p.Giocatore].p != null) ? saved[p.Giocatore].p : p["Titolare%"],
   disp: (saved[p.Giocatore] && saved[p.Giocatore].disp != null) ? saved[p.Giocatore].disp : !!p.Disp }));
-const ORDER = {P:0, D:1, C:2, A:3}, NAMES = {P:"Portiere", D:"Difensori", C:"Centrocampisti", A:"Attaccanti"};
 const ev = s => (s.p/100)*s.Fantavoto + (1 - s.p/100)*s.Rif;
-const col = v => "hsl(" + (120*(Math.max(1,Math.min(10,v))-1)/9).toFixed(0) + ",60%,40%)";
-function save(){ const o={}; S.forEach(s => { if (s.p !== s.p0 || s.disp !== !!s.Disp) o[s.Giocatore] = {p:s.p, disp:s.disp}; });
-  try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
-function bestLineup(){
+const col = v => "hsl(" + (120*(Math.max(3,Math.min(9,v))-3)/6).toFixed(0) + ",62%,40%)";
+function save(){ const o = {}; S.forEach(s => { if (s.p !== s.p0 || s.disp !== !!s.Disp) o[s.Giocatore] = {p:s.p, disp:s.disp}; });
+  if (modSel !== "auto") o._mod = modSel; try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
+function calc(mods){
   let best = null;
-  for (const mod of D.modules){
+  for (const mod of mods){
     const [d,c,a] = mod.split("-").map(Number), need = {P:1, D:d, C:c, A:a};
     let tot = 0, pick = [], ok = true;
     for (const r of ["P","D","C","A"]){
@@ -538,19 +818,26 @@ function bestLineup(){
   }
   return best;
 }
+function bestLineup(){
+  if (modSel !== "auto") { const b = calc([modSel]); if (b) return b; }
+  return calc(D.modules);
+}
 function mk(tag, cls, txt){ const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 function line(s){
   const l = mk("div","ln"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",s.Giocatore));
   l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%")); return l;
 }
+const byRole = (b, r) => b.pick.filter(s => s.Ruolo === r).sort((x,y) => ev(y)-ev(x));
 function update(){
-  const b = bestLineup(), L = document.getElementById("lineup"), B = document.getElementById("bench");
-  L.textContent = ""; B.textContent = "";
-  const inSet = new Set();
-  if (!b) { L.textContent = "Nessun modulo valido con i giocatori disponibili."; }
+  const b = bestLineup(); cur = b;
+  const L = document.getElementById("lineup"), B = document.getElementById("bench"), M = document.getElementById("mini");
+  L.textContent = ""; B.textContent = ""; M.textContent = ""; inSet = new Set();
+  if (!b) { L.textContent = "Nessun modulo valido con i giocatori disponibili."; document.getElementById("lt").textContent = "Formazione non disponibile"; }
   else {
-    document.getElementById("lt").textContent = "Formazione consigliata: " + b.mod + "  (valore atteso " + b.tot.toFixed(1) + ")";
-    ["P","D","C","A"].forEach(r => b.pick.filter(s => s.Ruolo === r).sort((x,y) => ev(y)-ev(x)).forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s)); }));
+    document.getElementById("lt").textContent = b.mod + " \u00b7 atteso " + b.tot.toFixed(1);
+    ["P","D","C","A"].forEach(r => { const g = byRole(b, r), d = mk("div"); d.appendChild(mk("i",null,r));
+      d.appendChild(document.createTextNode(g.map(s => s.Giocatore).join(" \u00b7 "))); M.appendChild(d);
+      g.forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s)); }); });
   }
   S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((x,y) => ev(y)-ev(x)).forEach(s => B.appendChild(line(s)));
   document.querySelectorAll(".row").forEach(r => { const s = S[+r.dataset.i];
@@ -558,13 +845,26 @@ function update(){
     const pv = r.querySelector(".pv"); pv.textContent = s.p + "%" + (s.p !== s.p0 ? " (modello " + s.p0 + "%)" : "");
     pv.classList.toggle("chg", s.p !== s.p0); });
 }
+function lineupText(){
+  if (!cur) return "";
+  const nm = r => byRole(cur, r).map(s => s.Giocatore).join(", ");
+  const bench = S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((x,y) => ev(y)-ev(x)).map(s => s.Giocatore).join(", ");
+  return "Giornata " + D.gno + " - modulo " + cur.mod + "\nP: " + nm("P") + "\nD: " + nm("D") + "\nC: " + nm("C") + "\nA: " + nm("A") + "\nPanchina: " + bench;
+}
+function copyText(t, btn){
+  const ok = () => { btn.textContent = "Copiato \u2713"; setTimeout(() => btn.textContent = "Copia", 1500); };
+  const fb = () => { try { const ta = mk("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok(); } catch (e) { btn.textContent = "Non riuscito"; } };
+  try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok, fb); else fb(); } catch (e) { fb(); }
+}
 function build(){
   const R = document.getElementById("roster"); R.textContent = "";
   D.order.forEach(i => { const s = S[i], r = mk("div","row"); r.dataset.i = i;
     const t = mk("div","top"), left = mk("div"); left.appendChild(mk("span","r",s.Ruolo)); left.appendChild(mk("span","nm",s.Giocatore));
     const bd = mk("div","badge",s.Voto.toFixed(1)); bd.style.background = col(s.Voto); t.appendChild(left); t.appendChild(bd); r.appendChild(t);
-    r.appendChild(mk("div","info", s.Avversario + " (" + s.Data + ") \u00b7 fantavoto " + s.Fantavoto.toFixed(2) + " \u00b7 xG " + s.xG + " xA " + s.xA +
-      (s["CS%"] != null ? " \u00b7 CS " + s["CS%"] + "%" : "") + (s.Nota ? " \u00b7 " + s.Nota : "")));
+    r.appendChild(mk("div","info", s.Avversario + " (" + s.Data + ") \u00b7 gol " + s.P_gol + "% \u00b7 assist " + s.P_ass + "%" +
+      (s["CS%"] != null ? " \u00b7 clean sheet " + s["CS%"] + "%" : "")));
+    r.appendChild(mk("div","info2", "fantavoto " + s.Fantavoto.toFixed(2) + " \u00b7 squadra " + s.GolSq.toFixed(1) + " gol attesi, avversario " + s.GolOpp.toFixed(1) +
+      " (" + s.Fonte + ")" + (s.Nota ? " \u00b7 " + s.Nota : "")));
     const c = mk("div","ctl"), sl = mk("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.step = 5; sl.value = s.p;
     sl.addEventListener("input", () => { s.p = +sl.value; save(); update(); });
     const pv = mk("span","pv"); const lb = mk("label","o"), cb = mk("input"); cb.type = "checkbox"; cb.checked = !s.disp;
@@ -572,59 +872,116 @@ function build(){
     lb.appendChild(cb); lb.appendChild(document.createTextNode(" fuori"));
     c.appendChild(sl); c.appendChild(pv); c.appendChild(lb); r.appendChild(c); R.appendChild(r); });
 }
+const sel = document.getElementById("mod");
+[["auto","Auto"]].concat(D.modules.map(m => [m, m])).forEach(o => { const e = mk("option", null, o[1]); e.value = o[0]; sel.appendChild(e); });
+sel.value = modSel;
+sel.addEventListener("change", () => { modSel = sel.value; save(); update(); });
+document.getElementById("copy").addEventListener("click", e => copyText(lineupText(), e.target));
 if (D.problems && D.problems.length) { const P = document.getElementById("probs"); P.style.display = "block";
   P.appendChild(mk("b", null, "Giocatori non calcolati")); D.problems.forEach(t => P.appendChild(mk("div", "info", t))); }
-document.getElementById("meta").textContent = "Aggiornato " + D.agg + " \u00b7 giornata del " + D.giornata;
-document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; });
+if (D.calib && D.calib.n > 0) { const C = document.getElementById("cal"), c = D.calib; C.style.display = "block";
+  C.appendChild(mk("b", null, "Affidabilit\u00e0 del modello"));
+  C.appendChild(mk("div", "info", "Su " + c.n + " prestazioni reali (giornate " + c.giornate.join(", ") + ") l'errore medio sul fantavoto \u00e8 " + c.mae_modello.toFixed(2) +
+    "; prevedere la media del ruolo darebbe " + c.mae_media_ruolo.toFixed(2) + "." + (c.mae_media_giocatore != null ?
+    " Su chi ha storico: modello " + c.mae_modello_sub.toFixed(2) + " contro " + c.mae_media_giocatore.toFixed(2) + " usando la media dei suoi ultimi fantavoti." : "")));
+  C.appendChild(mk("div", "info", c.n < 60 ? "Campione ancora piccolo: prendi questi numeri come indicativi." : "")); }
+document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds + "/" + D.partite + " partite";
+document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
 build(); update();
 </script></body></html>"""
 
 
-def to_html(df, fixtures, now, modules, problems=()):
-    d = df.copy()
+def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
+    d = df.reset_index(drop=True)
     order = d.assign(_o=d.Ruolo.map({"P": 0, "D": 1, "C": 2, "A": 3})).sort_values(
         ["_o", "EV"], ascending=[True, False])
-    d = d.drop(columns=[c for c in ["_o"] if c in d.columns])
+    info = info or {}
+    rep = (calib or {}).get("report") or None
     payload = {
         "players": json.loads(d.to_json(orient="records", force_ascii=False)),
-        "order": [int(list(d.index).index(i)) for i in order.index],
+        "order": [int(i) for i in order.index],
         "modules": modules,
         "minp": CFG["min_play_prob"],
         "problems": list(problems),
         "giornata": fixtures[0]["datetime"][:10],
+        "gno": info.get("rno", 0),
+        "odds": info.get("odds", 0),
+        "partite": info.get("partite", len(fixtures)),
         "agg": f"{now:%d/%m/%Y %H:%M}",
+        "calib": rep if rep and rep.get("n", 0) > 0 else None,
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     return HTML_TEMPLATE.replace("__DATA__", data)
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Previsione voti fantacalcio Serie A (xG/xA + avversario)")
+    ap = argparse.ArgumentParser(description="Previsione voti fantacalcio Serie A (xG/xA + avversario + quote)")
     ap.add_argument("--rosa", default="rosa.csv")
     ap.add_argument("--out", default="docs", help="cartella di output (index.html + previsioni.csv)")
+    ap.add_argument("--storico", default="storico", help="cartella delle previsioni salvate per la calibrazione")
+    ap.add_argument("--voti", default="voti_reali.csv", help="file con i tuoi voti reali")
+    ap.add_argument("--calib", default="calibrazione.json")
     ap.add_argument("--season", type=int, help="anno di inizio stagione (default: automatico)")
     ap.add_argument("--moduli", default=",".join(MODULES), help="moduli ammessi dalla tua lega, es. 4-3-3,3-5-2")
     ap.add_argument("--check", action="store_true", help="solo verifica riconoscimento nomi")
     ap.add_argument("--refresh", action="store_true", help="ignora la cache")
+    ap.add_argument("--calibra", action="store_true", help="ricalcola la calibrazione da storico + voti reali ed esci")
+    ap.add_argument("--backtest", action="store_true",
+                    help="con --giornata: ricostruisce la previsione usando solo dati precedenti a quella giornata")
+    ap.add_argument("--giornata", default="", help="numero/i di giornata, es. 3 oppure 2,3 (con --backtest)")
+    ap.add_argument("--no-odds", action="store_true", help="non usare le quote dei bookmaker")
     a = ap.parse_args(argv)
 
-    now = datetime.now()
+    if a.calibra:
+        calibra(a.storico, a.voti, a.calib)
+        return
+
+    now = datetime.now(ZoneInfo(CFG["tz"])).replace(tzinfo=None)      # ora italiana
     season = a.season or (now.year if now.month >= 7 else now.year - 1)
     roster = pd.read_csv(a.rosa)
     prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
-    df, fixtures, problems = run(prov, roster, season, now, check_only=a.check)
+    modules = [m.strip() for m in a.moduli.split(",")]
+    calib = None
+    if Path(a.calib).exists():
+        try:
+            calib = json.loads(Path(a.calib).read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            calib = None
+
+    if a.backtest:
+        rounds = [int(x) for x in a.giornata.split(",") if x.strip()]
+        if not rounds:
+            sys.exit("Con --backtest indica le giornate: --giornata 2,3")
+        for g in rounds:
+            df, fixtures, problems, info = run(prov, roster, season, now, round_no=g, backtest=True, calib=None)
+            f = save_predictions(df, info, fixtures, now, a.storico, force=True)
+            print(f"-> previsioni della giornata {g} salvate in {f}\n")
+        return
+
+    odds_events, key = None, os.environ.get("ODDS_API_KEY", "").strip()
+    if key and not a.no_odds and not a.check:
+        try:
+            odds_events = fetch_odds(key)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! quote bookmaker non disponibili, uso solo xG ({str(e).replace(key, '***')})")
+    elif not a.no_odds and not a.check:
+        print("Quote bookmaker: nessuna ODDS_API_KEY impostata, uso solo xG.")
+
+    df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
+                                       odds_events=odds_events)
     if a.check or df is None:
         return
-    lineup = best_lineup(df, [m.strip() for m in a.moduli.split(",")])
+    Path(a.storico).mkdir(parents=True, exist_ok=True)
+    saved = save_predictions(df, info, fixtures, now, a.storico)
+    lineup = best_lineup(df, modules)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     df.sort_values("EV", ascending=False).to_csv(out / "previsioni.csv", index=False)
-    (out / "index.html").write_text(to_html(df.reset_index(drop=True), fixtures, now,
-                                            [m.strip() for m in a.moduli.split(",")], problems), encoding="utf-8")
+    (out / "index.html").write_text(to_html(df, fixtures, now, modules, problems, info, calib), encoding="utf-8")
 
     pd.set_option("display.width", 200)
-    show = ["Giocatore", "Ruolo", "Avversario", "Voto", "Fantavoto", "xG", "xA", "CS%", "Titolare%", "Nota"]
+    show = ["Giocatore", "Ruolo", "Avversario", "Voto", "Fantavoto", "P_gol", "P_ass", "CS%", "Titolare%", "Nota"]
     if lineup:
         mod, tot, xi, bench = lineup
         print(f"\n=== FORMAZIONE CONSIGLIATA {mod} ===")
@@ -632,6 +989,8 @@ def main(argv=None):
         print("\n=== PANCHINA ===")
         print(bench[show].to_string(index=False))
     print(f"\nFile scritti in {out}/ (index.html, previsioni.csv)")
+    if saved:
+        print(f"Previsioni pre-partita salvate in {saved}")
 
 
 if __name__ == "__main__":
