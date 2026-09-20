@@ -76,6 +76,7 @@ CFG = {
     "calib_min_obs": 5,          # osservazioni minime per ruolo prima di applicare una correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
     "tz": "Europe/Rome",
+    "version": "20/09 - incolla elenco",
     "cache_hours": 12,
 }
 
@@ -940,7 +941,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <div class="s" id="meta"></div>
 <div id="bar">
   <div class="bh"><b id="lt">Formazione</b>
-    <select id="mod" aria-label="Modulo"></select><button id="copy">Copia</button></div>
+    <select id="mod" aria-label="Modulo"></select><button id="pbtn">Incolla elenco</button><button id="copy">Copia</button></div>
   <div class="mini" id="mini"></div>
 </div>
 <h2>Dettaglio formazione</h2><div class="card" id="lineup"></div>
@@ -949,12 +950,13 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <div id="cal" class="card" style="display:none"></div>
 <h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
 <div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
-<details class="card"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
+<details class="card" id="pdet"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
   <div class="s" style="margin:6px 0">Una riga per giocatore, copiata da app o siti. Riconosco i giocatori della tua rosa: "Maignan 100%" imposta la titolarit&agrave;, "Pulisic infortunato" o "Lucum&igrave; squalificato" lo mette fuori, "Hojlund titolare" lo porta al 90%.</div>
   <textarea id="paste" rows="6" placeholder="Maignan 100%&#10;Pulisic infortunato&#10;Lucum&igrave; squalificato"></textarea>
   <div class="bh" style="margin-top:6px"><select id="pmode"><option value="auto">Riconosci dalla riga</option><option value="out">Sono tutti indisponibili</option><option value="start">Sono tutti probabili titolari</option></select>
   <button id="apply">Applica</button></div><div class="info" id="pout"></div></details>
 <div id="roster"></div>
+<p class="s" id="ver"></p>
 <p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
 <script>
 const D = __DATA__;
@@ -1080,6 +1082,9 @@ function applyPaste(){
     (skipped ? skipped + " righe senza giocatori della tua rosa." : "");
 }
 document.getElementById("apply").addEventListener("click", applyPaste);
+document.getElementById("pbtn").addEventListener("click", () => { const d = document.getElementById("pdet"); d.open = true;
+  if (d.scrollIntoView) d.scrollIntoView({block: "center"}); document.getElementById("paste").focus(); });
+document.getElementById("ver").textContent = "versione pagina: " + D.ver;
 build(); update();
 </script></body></html>"""
 
@@ -1101,6 +1106,7 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
         "odds": info.get("odds", 0),
         "odds_msg": info.get("odds_msg", "non attive"),
         "inj_msg": info.get("inj_msg", "non attivi"),
+        "ver": CFG["version"],
         "partite": info.get("partite", len(fixtures)),
         "agg": f"{now:%d/%m/%Y %H:%M}",
         "calib": rep if rep and rep.get("n", 0) > 0 else None,
