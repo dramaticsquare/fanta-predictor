@@ -75,6 +75,7 @@ CFG = {
     # calibrazione sui tuoi voti reali
     "calib_min_obs": 5,          # osservazioni minime per ruolo prima di applicare una correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
+    "fc_shrink": 20,             # idem per la correzione delle percentuali di Fantacalcio.it
     "tz": "Europe/Rome",
     "version": "20/09 - lettore Fantacalcio.it",
     "cache_hours": 12,
@@ -173,6 +174,9 @@ class UnderstatProvider:
 
     def player_matches(self, pid):
         return self._get(f"pm_{pid}", lambda: self.client.player(player=str(pid)).get_match_data())
+
+    def match_roster(self, mid):
+        return self._get(f"roster_{mid}", lambda: self.client.match(match=str(mid)).get_roster_data())
 
 
 # ============================================================== SQUADRE =====
@@ -824,6 +828,185 @@ def save_predictions(df, info, fixtures, now, storico, force=False):
     return f
 
 
+# ============================================================== FANTACALCIO.IT =
+# Traccia l'affidabilita' delle probabili formazioni di Fantacalcio.it: i testi copiati (cartella formazioni/)
+# vengono confrontati con i minuti realmente giocati (Understat). Il risultato corregge le percentuali incollate.
+_MOD = re.compile(r"^\d(?:-\d){1,3}$")
+_PCT = re.compile(r"^\d{1,3}\s*%$")
+_UPD = re.compile(r"ultimo aggiornamento\s+(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{1,2}):(\d{2})", re.I)
+
+
+def parse_fc_text(text):
+    """Legge il testo copiato da Fantacalcio.it (stesso formato del lettore nella pagina).
+    Ritorna una lista di partite: home, away, updated (ora italiana), entries per squadra, out, doubt."""
+    L = [x.strip() for x in text.splitlines()]
+    n, k, pending, upd, out = len(L), 0, [], None, []
+    while k < n:
+        if k + 1 < n and _MOD.match(L[k + 1]) and L[k] and not _PCT.match(L[k]) and not _MOD.match(L[k]):
+            entries, j, bench = [], k + 2, False
+            while j < n:
+                cur = L[j]
+                if re.match(r"(?i)ultimo aggiornamento", cur):
+                    break
+                if j + 1 < n and _MOD.match(L[j + 1]) and not _PCT.match(cur):
+                    break
+                if cur.lower() == "panchina":
+                    bench = True
+                    j += 1
+                    continue
+                if j + 1 < n and _PCT.match(L[j + 1]) and cur and not _PCT.match(cur):
+                    entries.append({"name": cur, "pct": int(L[j + 1].replace("%", "").strip()), "bench": bench})
+                    j += 2
+                    continue
+                j += 1
+            pending.append({"team": L[k], "entries": entries})
+            k = j
+            continue
+        m = _UPD.search(L[k])
+        if m:
+            d, mo, y, hh, mi = map(int, m.groups())
+            upd = datetime(y, mo, d, hh, mi)
+        if re.match(r"(?i)^dettaglio calciatori", L[k]):
+            j, cur, o_names, d_names = k + 1, None, [], []
+            while j < n and not re.match(r"(?i)^(stemma|campioncino)\b", L[j]) and not (j + 1 < n and _MOD.match(L[j + 1])):
+                t = L[j]
+                hm = re.match(r"(?i)^(ballottaggi|squalificati|diffidati|infortunati|in dubbio)$", t)
+                if hm:
+                    cur = hm.group(1).lower()
+                elif cur and t and not re.match(r"(?i)^nessun", t) and not re.search(r"[,\d%]", t) and len(t) <= 32 and t[0].isupper():
+                    if cur in ("squalificati", "infortunati"):
+                        o_names.append(t)
+                    elif cur == "in dubbio":
+                        d_names.append(t)
+                j += 1
+            if len(pending) >= 2:
+                a, b = pending[-2], pending[-1]
+                out.append({"home": a["team"], "away": b["team"], "updated": upd, "home_entries": a["entries"],
+                            "away_entries": b["entries"], "out": o_names, "doubt": d_names})
+            pending, upd, k = [], None, j
+            continue
+        k += 1
+    return out
+
+
+def name_ok(fc_name, full_name):
+    """'Miranda J.' / 'Esposito F.P.' / 'Milinkovic-Savic V.' contro il nome completo Understat."""
+    parts, abbr = [], []
+    for tok in strip_accents(fc_name).lower().split():
+        if "." in tok:
+            abbr += [x for x in re.sub(r"[^a-z.]", "", tok).split(".") if x]
+        else:
+            parts += tokens(tok)
+    ct = tokens(full_name)
+    if not parts or not all(p in ct for p in parts):
+        return False
+    rest = [t for t in ct if t not in parts]
+    return all(any(t.startswith(a) for t in rest) for a in abbr)
+
+
+def _roster_players(raw):
+    """Understat rostersData -> {'h': [(nome, minuti)], 'a': [...]}"""
+    out = {"h": [], "a": []}
+    for side in ("h", "a"):
+        d = (raw or {}).get(side) or {}
+        for v in (d.values() if isinstance(d, dict) else d):
+            try:
+                out[side].append((str(v.get("player", "")), float(v.get("time") or 0)))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _bucket(p):
+    for lo, hi in ((100, 100), (60, 99), (50, 59), (30, 49), (10, 29), (0, 9)):
+        if lo <= p <= hi:
+            return lo, hi
+    return 0, 9
+
+
+def evaluate_fc(prov, season, fc_dir, storico_dir, roster):
+    """Confronta le percentuali di Fantacalcio.it con chi ha davvero giocato. None se non ci sono dati utili."""
+    files = sorted(Path(fc_dir).glob("*.txt"))
+    if not files:
+        return None
+    matches_all = prov.matches(season)
+    titles = sorted({m[s]["title"] for m in matches_all for s in ("h", "a")})
+    idx = {(m["h"]["title"], m["a"]["title"]): m for m in matches_all}
+    rounds = {id(m): no for no, g in split_rounds(matches_all) for m in g}
+    best = {}                                            # id partita -> (aggiornamento, snapshot)
+    for f in files:
+        for sm in parse_fc_text(f.read_text(encoding="utf-8", errors="ignore")):
+            h, a = resolve_team(sm["home"], titles), resolve_team(sm["away"], titles)
+            m = idx.get((h, a))
+            if not m or not m.get("isResult"):
+                continue
+            kick = to_local(m["datetime"])
+            if sm["updated"] and sm["updated"] > kick:      # copiato a partita iniziata: non e' una previsione
+                continue
+            key = m["id"]
+            if key not in best or (sm["updated"] or datetime.min) > (best[key][0] or datetime.min):
+                best[key] = (sm["updated"], sm, m, h, a, kick)
+    if not best:
+        return None
+    pool = pd.DataFrame(prov.players(season))[["player_name", "team_title"]]
+    rows, out_n, out_wrong, leads = [], 0, 0, []
+    my = {r.nome: r.squadra for r in roster.itertuples()}
+    stor = {}
+    for f in Path(storico_dir).glob("G*.csv"):
+        d = pd.read_csv(f)
+        stor[int(re.findall(r"\d+", f.stem)[0])] = {row["Giocatore"]: row["Titolare%"] for _, row in d.iterrows()}
+    for key, (upd, sm, m, h, a, kick) in best.items():
+        ros = _roster_players(prov.match_roster(key))
+        if upd:
+            leads.append((kick - upd).total_seconds() / 3600)
+        for side, team, entries in (("h", h, sm["home_entries"]), ("a", a, sm["away_entries"])):
+            known = pool[pool.team_title.astype(str).str.contains(re.escape(team), regex=True)].player_name.tolist()
+            for e in entries:
+                hit = next(((nm, mn) for nm, mn in ros[side] if name_ok(e["name"], nm)), None)
+                if hit is not None:
+                    minutes = hit[1]
+                elif any(name_ok(e["name"], nm) for nm in known):
+                    minutes = 0.0                            # lo conosce Understat ma non e' in campo: non ha giocato
+                else:
+                    continue                                 # sconosciuto (terzo portiere, nome diverso): escluso
+                mine = next((nome for nome, sq in my.items() if resolve_team(sq, titles) == team
+                             and (name_ok(nome, e["name"]) or name_ok(e["name"], nome))), None)
+                mp = None
+                if mine is not None and rounds.get(id(m)) in stor:
+                    v = stor[rounds[id(m)]].get(mine)
+                    mp = None if v is None else float(v)
+                rows.append({"pct": e["pct"], "play": float(minutes >= 20), "start": float(minutes >= 60), "model": mp})
+        for nm in sm["out"]:
+            for side in ("h", "a"):
+                hit = next(((x, mn) for x, mn in ros[side] if name_ok(nm, x)), None)
+                if hit is not None:
+                    out_n += 1
+                    out_wrong += int(hit[1] >= 20)
+                elif any(name_ok(nm, x) for x in pool.player_name):
+                    out_n += 1
+                    break
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    rep = {"n": int(len(df)), "matches": len(best), "brier_fc": float(((df.pct / 100 - df.play) ** 2).mean()),
+           "brier_const": float(((df.play.mean() - df.play) ** 2).mean()), "buckets": [],
+           "out_n": out_n, "out_wrong": out_wrong, "lead_h": float(np.mean(leads)) if leads else None, "roster": None}
+    df["lo"], df["hi"] = zip(*df.pct.map(_bucket))
+    for (lo, hi), g in df.groupby(["lo", "hi"]):
+        rep["buckets"].append({"lo": int(lo), "hi": int(hi), "n": int(len(g)), "pct": float(g.pct.mean()),
+                               "play": float(g.play.mean()), "start": float(g.start.mean())})
+    sub = df.dropna(subset=["model"])
+    if len(sub) >= 10:
+        rep["roster"] = {"n": int(len(sub)), "brier_fc": float(((sub.pct / 100 - sub.play) ** 2).mean()),
+                         "brier_model": float(((sub.model / 100 - sub.play) ** 2).mean())}
+    fcmap = []
+    for b in rep["buckets"]:
+        if b["n"] >= 8:                                      # correzione prudente: si fida dei dati solo se abbastanza
+            p = (b["n"] * b["play"] + CFG["fc_shrink"] * b["pct"] / 100) / (b["n"] + CFG["fc_shrink"])
+            fcmap.append({"lo": b["lo"], "hi": b["hi"], "p": round(p, 3), "n": b["n"]})
+    return rep, fcmap
+
+
 # ============================================================== CALIBRAZIONE =
 def read_voti(path):
     """voti_reali.csv: blocchi '# giornata: N' seguiti da righe 'giocatore,voto,fantavoto'.
@@ -855,7 +1038,7 @@ def read_voti(path):
     return pd.DataFrame(rows, columns=["giornata", "Giocatore", "Reale"])
 
 
-def calibra(storico_dir, voti_path, out_json):
+def _calibra_votes(storico_dir, voti_path, out_json):
     out = {"aggiornato": datetime.now().strftime("%Y-%m-%d %H:%M"), "offset": {r: 0.0 for r in "PDCA"}, "report": {"n": 0}}
     frames = []
     for f in sorted(Path(storico_dir).glob("G*.csv")):
@@ -908,6 +1091,29 @@ def calibra(storico_dir, voti_path, out_json):
     return out
 
 
+def calibra(storico_dir, voti_path, out_json, fc_dir=None, prov=None, season=None, roster=None):
+    out = _calibra_votes(storico_dir, voti_path, out_json)
+    if fc_dir and prov is not None and Path(fc_dir).exists() and list(Path(fc_dir).glob("*.txt")):
+        try:
+            res = evaluate_fc(prov, season, fc_dir, storico_dir, roster)
+        except Exception as e:  # noqa: BLE001
+            res = None
+            print(f"  ! valutazione Fantacalcio.it non riuscita ({type(e).__name__}: {e})")
+        if res:
+            rep, fcmap = res
+            out["fc"], out["fc_map"] = rep, fcmap
+            print(f"Fantacalcio.it: {rep['n']} giocatori in {rep['matches']} partite, errore (Brier) {rep['brier_fc']:.3f} "
+                  f"contro {rep['brier_const']:.3f} di chi prevedesse sempre la media")
+            for b in rep["buckets"]:
+                print(f"   {b['lo']}-{b['hi']}%: {b['n']} giocatori, ha giocato il {b['play']*100:.0f}% (dato medio {b['pct']:.0f}%)")
+            if rep["roster"]:
+                print(f"   sui tuoi giocatori: Fantacalcio.it {rep['roster']['brier_fc']:.3f} vs modello {rep['roster']['brier_model']:.3f}")
+        else:
+            print("Fantacalcio.it: nessuna partita conclusa con un testo salvato in formazioni/ (copiato prima del calcio d'inizio).")
+        Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+    return out
+
+
 # ============================================================== OUTPUT ======
 HTML_TEMPLATE = r"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Fanta Predictor</title>
@@ -951,10 +1157,10 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
 <div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
 <details class="card" id="pdet"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
-  <div class="s" style="margin:6px 0">Incolla il testo di un sito con le probabili formazioni, anche pi&ugrave; partite insieme: riconosco i blocchi tipo &quot;MILAN (3-4-2-1): Maignan; Gila, ...&quot; (titolari 90%, alternative con &quot;/&quot; 50%, gli altri della tua squadra 15%), i &quot;Ballottaggi ... 55%-45%&quot; e gli &quot;Indisponibili/Squalificati: ...&quot;. Vanno bene anche righe singole come &quot;Maignan 100%&quot; o &quot;Pulisic infortunato&quot;.</div>
+  <div class="s" style="margin:6px 0">Incolla il testo di un sito con le probabili formazioni, anche pi&ugrave; partite insieme: riconosco i blocchi tipo &quot;MILAN (3-4-2-1): Maignan; Gila, ...&quot; (titolari 90%, alternative con &quot;/&quot; 50%, gli altri della tua squadra 15%), i &quot;Ballottaggi ... 55%-45%&quot; e gli &quot;Indisponibili/Squalificati: ...&quot;. Vanno bene anche righe singole come &quot;Maignan 100%&quot; o &quot;Pulisic infortunato&quot;. Con &quot;Salva su GitHub&quot; conservi il testo di Fantacalcio.it per misurare, giornata dopo giornata, quanto &egrave; affidabile.</div>
   <textarea id="paste" rows="6" placeholder="Maignan 100%&#10;Pulisic infortunato&#10;Lucum&igrave; squalificato"></textarea>
   <div class="bh" style="margin-top:6px"><select id="pmode"><option value="auto">Riconosci dalla riga</option><option value="out">Sono tutti indisponibili</option><option value="start">Sono tutti probabili titolari</option></select>
-  <button id="apply">Applica</button></div><div class="info" id="pout"></div></details>
+  <button id="apply">Applica</button><button id="gh">Salva su GitHub</button></div><div class="info" id="pout"></div></details>
 <div id="roster"></div>
 <p class="s" id="ver"></p>
 <p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
@@ -1021,7 +1227,7 @@ function lineupText(){
   return "Giornata " + D.gno + " - modulo " + cur.mod + "\nP: " + nm("P") + "\nD: " + nm("D") + "\nC: " + nm("C") + "\nA: " + nm("A") + "\nPanchina: " + bench;
 }
 function copyText(t, btn){
-  const ok = () => { btn.textContent = "Copiato \u2713"; setTimeout(() => btn.textContent = "Copia", 1500); };
+  const orig = btn.textContent, ok = () => { btn.textContent = "Copiato \u2713"; setTimeout(() => btn.textContent = orig, 1500); };
   const fb = () => { try { const ta = mk("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); ok(); } catch (e) { btn.textContent = "Non riuscito"; } };
   try { if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(ok, fb); else fb(); } catch (e) { fb(); }
 }
@@ -1054,12 +1260,21 @@ if (D.calib && D.calib.n > 0) { const C = document.getElementById("cal"), c = D.
     "; prevedere la media del ruolo darebbe " + c.mae_media_ruolo.toFixed(2) + "." + (c.mae_media_giocatore != null ?
     " Su chi ha storico: modello " + c.mae_modello_sub.toFixed(2) + " contro " + c.mae_media_giocatore.toFixed(2) + " usando la media dei suoi ultimi fantavoti." : "")));
   C.appendChild(mk("div", "info", c.n < 60 ? "Campione ancora piccolo: prendi questi numeri come indicativi." : "")); }
+if (D.fc) { const C = document.getElementById("cal"), f = D.fc; C.style.display = "block";
+  C.appendChild(mk("b", null, "Fantacalcio.it: quanto ci si pu\u00f2 fidare"));
+  C.appendChild(mk("div", "info", "Su " + f.n + " giocatori in " + f.matches + " partite" + (f.lead_h != null ? " (testo copiato in media " + f.lead_h.toFixed(1) + " ore prima)" : "") +
+    ": errore delle percentuali " + f.brier_fc.toFixed(3) + ", contro " + f.brier_const.toFixed(3) + " di chi prevedesse per tutti la stessa probabilit\u00e0."));
+  f.buckets.filter(b => b.n >= 5).forEach(b => C.appendChild(mk("div", "info", "\u2022 dato " + b.lo + (b.hi !== b.lo ? "-" + b.hi : "") + "%: ha giocato il " + Math.round(b.play * 100) + "% (" + b.n + " casi)")));
+  if (f.roster) C.appendChild(mk("div", "info", "Sui tuoi giocatori (" + f.roster.n + "): Fantacalcio.it " + f.roster.brier_fc.toFixed(3) + " contro il mio modello " + f.roster.brier_model.toFixed(3) + " (pi\u00f9 basso = meglio)."));
+  if (f.out_n) C.appendChild(mk("div", "info", "Tra gli infortunati/squalificati indicati, ne hanno giocato " + f.out_wrong + " su " + f.out_n + "."));
+}
 document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg + " \u00b7 infortuni: " + D.inj_msg;
 document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
 
 const norm = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\u00f8/gi, "o").replace(/\u00e6/gi, "ae").replace(/\u0142/gi, "l").replace(/\u0111/gi, "d").replace(/\u00df/g, "ss").toLowerCase();
 const toks = t => norm(t).replace(/[^a-z ]/g, " ").split(/\s+/).filter(Boolean);
+const mapPct = p => { const b = (D.fcmap || []).find(x => p >= x.lo && p <= x.hi); return b ? Math.round(b.p * 100) : p; };
 const TW = s => norm(s).replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
 const nameMatches = (s, txt) => { const lt = new Set(toks(txt)), l = toks(s.Giocatore).filter(t => t.length > 1); return l.length > 0 && l.every(t => lt.has(t)); };
 function teamIn(header){
@@ -1136,7 +1351,7 @@ function parseFantacalcio(text){
         j++;
       }
       const rt = teamIn(name); read.push(rt || name); pending.push(rt);
-      if (rt) S.filter(s => s.Squadra === rt).forEach(s => { const e = entries.find(e => nameMatches(s, e.name)); put(s, e ? e.pct : 5, false); });
+      if (rt) S.filter(s => s.Squadra === rt).forEach(s => { const e = entries.find(e => nameMatches(s, e.name)); put(s, e ? mapPct(e.pct) : 5, false); });
       k = j; continue;
     }
     if (/^dettaglio calciatori/i.test(L[k])) {
@@ -1168,7 +1383,7 @@ function applyPaste(){
       else if (a.p != null) { const was = !s.disp; s.p = Math.max(0, Math.min(100, Math.round(a.p / 5) * 5)); s.disp = true; done.push(s.Giocatore + " " + s.p + "%" + (was ? " (era fuori: rimesso in gioco)" : "")); } });
     const missing = [...new Set(S.map(s => s.Squadra))].filter(t => !res.teams.includes(t));
     msg = (fc.teams.length ? "Fantacalcio.it: lette " + fc.nread + " squadre (" + fc.matches + " partite). " : "") + "Squadre della tua rosa trovate: " + res.teams.join(", ") + ". " + (done.length ? "Applicato: " + done.join(", ") + ". " : "Nessuna modifica ai tuoi giocatori. ") +
-      (missing.length ? "Non trovate nel testo: " + missing.join(", ") + "." : "");
+      (missing.length ? "Non trovate nel testo: " + missing.join(", ") + ". " : "") + (fc.teams.length && (D.fcmap || []).length ? "Percentuali corrette con lo storico di Fantacalcio.it." : "");
   } else {
     const r = applyLines(text, mode); msg = r.done.length ? "Applicato: " + r.done.join(", ") + ". " + (r.skipped ? r.skipped + " righe senza giocatori della tua rosa." : "") :
       "Non ho trovato blocchi tipo 'MILAN (3-4-2-1): Maignan; ...' n\u00e9 righe con nome e %/parola chiave. Se hai incollato una lista di soli nomi, scegli dal menu 'indisponibili' o 'titolari'.";
@@ -1176,6 +1391,17 @@ function applyPaste(){
   save(); build(); update(); out.textContent = msg;
 }
 document.getElementById("apply").addEventListener("click", applyPaste);
+document.getElementById("gh").addEventListener("click", e => {
+  const t = document.getElementById("paste").value, o = document.getElementById("pout");
+  if (!t.trim()) { o.textContent = "Incolla prima il testo di Fantacalcio.it, poi tocca Salva su GitHub."; return; }
+  copyText(t, e.target);
+  const parts = location.pathname.split("/").filter(Boolean), host = location.hostname, stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+  if (host.endsWith("github.io") && parts.length) {
+    window.open("https://github.com/" + host.split(".")[0] + "/" + parts[0] + "/new/main?filename=formazioni/" + stamp + ".txt", "_blank");
+    o.textContent = "Testo copiato. Nella pagina GitHub incollalo nel riquadro e premi Commit changes.";
+  } else o.textContent = "Testo copiato. Nel tuo repository crea un file dentro la cartella formazioni/ e incollalo.";
+});
+
 document.getElementById("pbtn").addEventListener("click", () => { const d = document.getElementById("pdet"); d.open = true;
   if (d.scrollIntoView) d.scrollIntoView({block: "center"}); document.getElementById("paste").focus(); });
 document.getElementById("ver").textContent = "versione pagina: " + D.ver;
@@ -1204,6 +1430,8 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
         "partite": info.get("partite", len(fixtures)),
         "agg": f"{now:%d/%m/%Y %H:%M}",
         "calib": rep if rep and rep.get("n", 0) > 0 else None,
+        "fc": (calib or {}).get("fc"),
+        "fcmap": (calib or {}).get("fc_map") or [],
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     return HTML_TEMPLATE.replace("__DATA__", data)
@@ -1216,6 +1444,7 @@ def main(argv=None):
     ap.add_argument("--storico", default="storico", help="cartella delle previsioni salvate per la calibrazione")
     ap.add_argument("--voti", default="voti_reali.csv", help="file con i tuoi voti reali")
     ap.add_argument("--calib", default="calibrazione.json")
+    ap.add_argument("--formazioni", default="formazioni", help="cartella con i testi copiati da Fantacalcio.it")
     ap.add_argument("--season", type=int, help="anno di inizio stagione (default: automatico)")
     ap.add_argument("--moduli", default=",".join(MODULES), help="moduli ammessi dalla tua lega, es. 4-3-3,3-5-2")
     ap.add_argument("--check", action="store_true", help="solo verifica riconoscimento nomi")
@@ -1228,7 +1457,13 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     if a.calibra:
-        calibra(a.storico, a.voti, a.calib)
+        prov, season, roster = None, None, None
+        if Path(a.formazioni).exists() and list(Path(a.formazioni).glob("*.txt")):
+            n_ = datetime.now(ZoneInfo(CFG["tz"]))
+            season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
+            roster = pd.read_csv(a.rosa)
+            prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
+        calibra(a.storico, a.voti, a.calib, a.formazioni, prov, season, roster)
         return
 
     now = datetime.now(ZoneInfo(CFG["tz"])).replace(tzinfo=None)      # ora italiana
