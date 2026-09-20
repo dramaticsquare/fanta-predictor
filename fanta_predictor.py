@@ -113,6 +113,11 @@ def num(df: pd.DataFrame, cols) -> pd.DataFrame:
     return df
 
 
+def to_local(s: str) -> datetime:
+    """Understat scrive gli orari in UTC (es. il venerdi' delle 20:45 italiane e' 18:45): converto in ora italiana."""
+    return datetime.fromisoformat(s).replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(CFG["tz"])).replace(tzinfo=None)
+
+
 def decay(n: int, half_life: float) -> np.ndarray:
     """Pesi per n osservazioni in ordine cronologico: l'ultima pesa 1."""
     return 0.5 ** (np.arange(n)[::-1] / half_life)
@@ -257,8 +262,7 @@ def split_rounds(matches):
 def current_round(matches, now):
     """Giornata in corso (o la prossima), COMPLETA: include anche le partite gia' giocate."""
     for no, g in split_rounds(matches):
-        if any((not m.get("isResult")) and datetime.fromisoformat(m["datetime"]) >= now - timedelta(days=2)
-               for m in g):
+        if any((not m.get("isResult")) and to_local(m["datetime"]) >= now - timedelta(days=2) for m in g):
             return no, g
     return 0, []
 
@@ -580,13 +584,14 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
     fx = {}
     for m in fixtures:
         h, a = m["h"]["title"], m["a"]["title"]
-        played = (not backtest) and (bool(m.get("isResult")) or datetime.fromisoformat(m["datetime"]) < now)
-        fx[h] = (a, True, m["datetime"], played)
-        fx[a] = (h, False, m["datetime"], played)
+        played = (not backtest) and (bool(m.get("isResult")) or to_local(m["datetime"]) < now)
+        when_local = to_local(m["datetime"]).strftime("%Y-%m-%d %H:%M")
+        fx[h] = (a, True, when_local, played)
+        fx[a] = (h, False, when_local, played)
     n_played = sum(1 for v in fx.values() if v[3]) // 2
     odds_map = {} if backtest else attach_odds(odds_events, titles)
     tag = " [BACKTEST: solo dati precedenti]" if backtest else ""
-    print(f"Giornata {rno}: {len(fixtures)} partite dal {fixtures[0]['datetime'][:16]} "
+    print(f"Giornata {rno}: {len(fixtures)} partite dal {to_local(fixtures[0]['datetime']):%Y-%m-%d %H:%M} (ora italiana) "
           f"({n_played} gia' iniziate/giocate){tag}")
     if odds_events is not None and not backtest:
         print(f"Quote bookmaker trovate per {len(odds_map)}/{len(fixtures)} partite")
@@ -671,7 +676,7 @@ def save_predictions(df, info, fixtures, now, storico, force=False):
     rno = info["rno"]
     if rno <= 0:
         return None
-    kickoff = datetime.fromisoformat(fixtures[0]["datetime"])
+    kickoff = to_local(fixtures[0]["datetime"])
     if not force and now >= kickoff:
         return None                      # giornata gia' iniziata: non sovrascrivo le previsioni pre-partita
     d = Path(storico)
