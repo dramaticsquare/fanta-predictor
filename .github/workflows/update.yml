@@ -1,6 +1,7 @@
 # Metti questo file in .github/workflows/update.yml del tuo repository GitHub.
-# Ogni giorno alle 07:00 UTC rigenera docs/index.html; attiva GitHub Pages su "main /docs"
-# e apri la pagina dal telefono. (Non testato dal vivo: controlla il primo run in "Actions".)
+# Ogni giorno alle 07:00 UTC: ricalcola la calibrazione sui tuoi voti reali, rigenera docs/index.html
+# (GitHub Pages su "main /docs") e salva le previsioni pre-partita in storico/.
+# Quote bookmaker (facoltative): secret ODDS_API_KEY in Settings > Secrets and variables > Actions > Repository secrets.
 name: aggiorna-previsioni
 on:
   schedule: [{cron: "0 7 * * *"}]
@@ -9,15 +10,21 @@ permissions:
   contents: write
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install -r requirements.txt
+      - name: Controllo chiave quote
+        run: |
+          if [ -n "$ODDS_API_KEY" ]; then echo "ODDS_API_KEY presente (${#ODDS_API_KEY} caratteri)"; else echo "ODDS_API_KEY ASSENTE: il secret non arriva al workflow"; fi
+      - run: python fanta_predictor.py --calibra
       - run: python fanta_predictor.py --refresh
       - run: |
           git config user.name "fanta-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add docs
+          git add -A docs storico calibrazione.json
           git diff --cached --quiet || (git commit -m "aggiornamento previsioni" && git push)
