@@ -5,9 +5,9 @@ Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.29,0.09,25,8,,83,7.13,6.939,5.8,7.15,
 Conceicao,Juventus,C,True,vs Atalanta,20/09,0.28,0.16,25,15,,100,7.12,6.992,7.0,7.12,6.483,2.18,0.81,xG,partita gia' iniziata/giocata
 Laurientè,Sassuolo,A,True,@ Monza,18/09,0.23,0.24,21,21,,100,7.06,6.863,5.7,7.06,7.255,1.41,2.05,xG,partita gia' iniziata/giocata
 Ramon,Como,D,True,@ Frosinone,20/09,0.21,0.07,19,7,24.0,100,6.74,6.753,6.7,6.74,6.28,2.17,1.44,xG,partita gia' iniziata/giocata
-Stulic,Lecce,A,True,@ AC Milan,20/09,0.08,0.02,8,2,,70,6.45,6.256,4.8,6.7,7.255,0.53,2.91,xG+quote,partita gia' iniziata/giocata
+Stulic,Lecce,A,True,@ AC Milan,20/09,0.08,0.02,8,2,,70,6.45,6.256,4.8,6.7,7.255,0.53,3.14,xG+quote,partita gia' iniziata/giocata
 De Ketelaere,Atalanta,A,True,@ Juventus,20/09,0.09,0.13,9,12,,80,6.54,6.348,4.9,6.69,7.255,0.81,2.18,xG,partita gia' iniziata/giocata
-Pulisic,Milan,C,True,vs Lecce,20/09,0.23,0.16,20,15,,19,7.05,6.918,6.8,6.59,6.483,2.91,0.53,xG+quote,partita gia' iniziata/giocata
+Pulisic,Milan,C,True,vs Lecce,20/09,0.25,0.18,22,16,,19,7.11,6.985,6.9,6.6,6.483,3.14,0.53,xG+quote,partita gia' iniziata/giocata
 Cristante,Roma,C,True,vs Inter,19/09,0.08,0.07,7,6,,100,6.49,6.367,6.0,6.49,6.483,2.01,1.6,xG,partita gia' iniziata/giocata
 Orsolini,Bologna,C,False,vs Torino,19/09,0.1,0.03,9,3,,27,6.45,6.318,5.9,6.47,6.483,1.53,1.06,xG,partita gia' iniziata/giocata
 Mancini,Roma,D,True,vs Inter,19/09,0.1,0.12,10,11,20.0,100,6.47,6.486,6.3,6.47,6.28,2.01,1.6,xG,partita gia' iniziata/giocata
@@ -17,10 +17,10 @@ Alajbegovic,Juventus,C,True,vs Atalanta,20/09,0.09,0.06,9,6,,69,6.4,6.273,5.9,6.
 Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,6,6,,95,6.37,6.247,5.8,6.38,6.483,1.5,1.22,xG,partita gia' iniziata/giocata
 Miranda J.,Bologna,D,True,vs Torino,19/09,0.03,0.16,3,15,35.0,76,6.39,6.398,6.2,6.36,6.28,1.53,1.06,xG,partita gia' iniziata/giocata
 Wesley,Roma,D,True,vs Inter,19/09,0.05,0.18,5,16,20.0,70,6.39,6.398,6.2,6.35,6.28,2.01,1.6,xG,partita gia' iniziata/giocata
-Gabbia,Milan,D,True,vs Lecce,20/09,0.05,0.02,5,2,59.0,32,6.45,6.465,6.3,6.34,6.28,2.91,0.53,xG+quote,partita gia' iniziata/giocata
+Gabbia,Milan,D,True,vs Lecce,20/09,0.05,0.02,5,2,59.0,32,6.47,6.477,6.3,6.34,6.28,3.14,0.53,xG+quote,partita gia' iniziata/giocata
 Lucumì,Juventus,D,True,vs Atalanta,20/09,0.04,0.05,4,5,45.0,67,6.28,6.292,6.0,6.28,6.28,2.18,0.81,xG,partita gia' iniziata/giocata
 Diego Carlos,Parma,D,True,vs Genoa,20/09,0.07,0.02,7,2,28.0,56,6.29,6.3,6.0,6.28,6.28,1.09,1.27,xG,partita gia' iniziata/giocata
 Badiashile,Napoli,D,True,@ Fiorentina,20/09,0.0,0.0,0,0,29.0,10,6.18,6.191,5.8,6.27,6.28,1.5,1.22,xG,partita gia' iniziata/giocata
-Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,59.0,100,5.73,5.728,7.7,5.73,4.6,2.91,0.53,xG+quote,partita gia' iniziata/giocata
-Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,59.0,0,5.76,5.757,7.7,4.6,4.6,2.91,0.53,xG+quote,nessun dato Understat: usa lo slider - partita gia' iniziata/giocata
-Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,0,0,5.0,100,3.08,3.085,3.7,3.08,4.6,0.53,2.91,xG+quote,partita gia' iniziata/giocata
+Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,59.0,100,5.73,5.728,7.7,5.73,4.6,3.14,0.53,xG+quote,partita gia' iniziata/giocata
+Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,59.0,0,5.76,5.758,7.7,4.6,4.6,3.14,0.53,xG+quote,nessun dato Understat: usa lo slider - partita gia' iniziata/giocata
+Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,0,0,4.0,100,2.85,2.851,3.4,2.85,4.6,0.53,3.14,xG+quote,partita gia' iniziata/giocata
