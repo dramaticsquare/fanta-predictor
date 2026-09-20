@@ -982,6 +982,7 @@ def main(argv=None):
     if a.no_odds:
         odds_note = "disattivate (--no-odds)"
     elif key and not a.check:
+        print(f"ODDS_API_KEY trovata ({len(key)} caratteri)")
         try:
             odds_events, remaining = fetch_odds(key)
             odds_note = f"crediti rimasti {remaining}" if remaining is not None else None
@@ -989,7 +990,9 @@ def main(argv=None):
                 print(f"Crediti The Odds API rimasti: {remaining}")
         except Exception as e:  # noqa: BLE001
             msg = str(e).replace(key, "***")
-            odds_note = f"non attive: errore API ({msg[:80]})"
+            hint = " - chiave rifiutata: incolla nel secret solo il codice ricevuto per email, senza spazi" \
+                if ("401" in msg or "403" in msg) else ""
+            odds_note = f"non attive: errore API ({msg[:80]}){hint}"
             print(f"  ! quote bookmaker non disponibili, uso solo xG ({msg})")
     elif not a.check:
         odds_note = "non attive: manca il secret ODDS_API_KEY"
