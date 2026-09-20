@@ -1,7 +1,9 @@
 # Metti questo file in .github/workflows/update.yml del tuo repository GitHub.
 # Ogni giorno alle 07:00 UTC: ricalcola la calibrazione sui tuoi voti reali, rigenera docs/index.html
 # (GitHub Pages su "main /docs") e salva le previsioni pre-partita in storico/.
-# Quote bookmaker (facoltative): secret ODDS_API_KEY in Settings > Secrets and variables > Actions > Repository secrets.
+# Facoltativi (Settings > Secrets and variables > Actions > Repository secrets):
+#   ODDS_API_KEY      = quote bookmaker (the-odds-api.com)
+#   API_FOOTBALL_KEY  = infortuni e squalificati (api-football.com)
 name: aggiorna-previsioni
 on:
   schedule: [{cron: "0 7 * * *"}]
@@ -13,14 +15,16 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+      API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12", cache: pip}
       - run: pip install -r requirements.txt
-      - name: Controllo chiave quote
+      - name: Controllo chiavi
         run: |
-          if [ -n "$ODDS_API_KEY" ]; then echo "ODDS_API_KEY presente (${#ODDS_API_KEY} caratteri)"; else echo "ODDS_API_KEY ASSENTE: il secret non arriva al workflow"; fi
+          if [ -n "$ODDS_API_KEY" ]; then echo "ODDS_API_KEY presente (${#ODDS_API_KEY} caratteri)"; else echo "ODDS_API_KEY assente"; fi
+          if [ -n "$API_FOOTBALL_KEY" ]; then echo "API_FOOTBALL_KEY presente (${#API_FOOTBALL_KEY} caratteri)"; else echo "API_FOOTBALL_KEY assente"; fi
       - run: python fanta_predictor.py --calibra
       - run: python fanta_predictor.py --refresh
       - run: |
