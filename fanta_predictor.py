@@ -394,8 +394,8 @@ def attach_odds(events, titles):
 API_FOOTBALL = "https://v3.football.api-sports.io"
 
 
-def fetch_injuries(api_key, season, dates, cache_dir=".cache_fanta"):
-    """Infortunati/squalificati/in dubbio da API-Football (una chiamata per data di gioco). Facoltativo."""
+def _injuries_apisports(api_key, season, dates, cache_dir=".cache_fanta"):
+    """API-Sports (sito api-football.com): infortunati, squalificati e in dubbio, una chiamata per data di gioco."""
     cache = Path(cache_dir)
     cache.mkdir(exist_ok=True)
     f = cache / f"injuries_{season}.json"
@@ -416,6 +416,50 @@ def fetch_injuries(api_key, season, dates, cache_dir=".cache_fanta"):
         out += store[d]["r"]
     f.write_text(json.dumps(store), encoding="utf-8")
     return out
+
+
+APIFOOTBALL_COM = "https://apiv3.apifootball.com/"
+
+
+def _injuries_apifootball_com(api_key, cache_dir=".cache_fanta"):
+    """apifootball.com (servizio DIVERSO da api-football.com): usa il flag 'player_injured' della rosa di ogni squadra.
+    Solo infortunati: niente squalificati ne' in dubbio."""
+    cache = Path(cache_dir)
+    cache.mkdir(exist_ok=True)
+    f = cache / "injuries_apifootballcom.json"
+    if f.exists() and (time.time() - f.stat().st_mtime) < CFG["injuries_cache_hours"] * 3600:
+        return json.loads(f.read_text(encoding="utf-8"))
+    k = urllib.parse.quote(api_key)
+
+    def call(q):
+        d = _http_json(f"{APIFOOTBALL_COM}?{q}&APIkey={k}", timeout=60)
+        if isinstance(d, dict):                    # errore: {"error": 404, "message": "..."}
+            raise RuntimeError(f"apifootball.com: {d.get('message') or d}")
+        return d
+
+    leagues = call("action=get_leagues&country_id=5")
+    lid = next((l["league_id"] for l in leagues if str(l.get("league_name", "")).strip().lower() == "serie a"), None)
+    if not lid:
+        raise RuntimeError("apifootball.com: Serie A non inclusa nel tuo piano")
+    out = []
+    for t in call(f"action=get_teams&league_id={lid}"):
+        for p in t.get("players", []):
+            if str(p.get("player_injured", "")).strip().lower() == "yes":
+                out.append({"player": {"name": p.get("player_name"), "type": "Missing Fixture", "reason": "infortunato"},
+                            "team": {"name": t.get("team_name")}})
+    f.write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
+def is_apifootball_com(site):
+    """'apifootball.com' (senza trattino) e' un servizio diverso da 'api-football.com' (con trattino, API-Sports)."""
+    return str(site).strip().lower().replace("https://", "").replace("www.", "").startswith("apifootball")
+
+
+def fetch_injuries(api_key, season, dates, site="api-football.com", cache_dir=".cache_fanta"):
+    if is_apifootball_com(site):
+        return _injuries_apifootball_com(api_key, cache_dir)
+    return _injuries_apisports(api_key, season, dates, cache_dir)
 
 
 def normalize_injuries(raw, titles):
@@ -606,7 +650,8 @@ def best_lineup(df, modules=None):
 
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
-        odds_events=None, calib=None, odds_note=None, inj_key=None):
+        odds_events=None, calib=None, odds_note=None, inj_key=None,
+        inj_site="api-football.com"):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
     matches_all = prov.matches(season)
@@ -650,13 +695,20 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
     inj_list, inj_msg, n_inj = [], ("non usati (backtest)" if backtest else "non attivi: manca il secret API_FOOTBALL_KEY"), 0
     if inj_key and not backtest and not check_only:
         try:
-            raw_inj = fetch_injuries(inj_key, season, {m["datetime"][:10] for m in fixtures})
+            raw_inj = fetch_injuries(inj_key, season, {m["datetime"][:10] for m in fixtures}, inj_site)
             inj_list = normalize_injuries(raw_inj, titles)
             inj_msg = "attivi"
+            if is_apifootball_com(inj_site):
+                inj_msg = "attivi via apifootball.com (solo infortunati, non squalificati)"
         except Exception as e:  # noqa: BLE001
             msg = str(e).replace(inj_key, "***")
-            hint = " (il piano gratuito potrebbe non coprire la stagione in corso: usa gli slider)" \
-                if ("plan" in msg.lower() or "season" in msg.lower()) else ""
+            low = msg.lower()
+            if any(w in low for w in ("key", "token", "401", "403", "invalid", "unauthor")):
+                hint = " - chiave non riconosciuta: controlla API_FOOTBALL_SITE (apifootball.com e api-football.com sono due servizi diversi)"
+            elif "plan" in low or "season" in low:
+                hint = " (il tuo piano potrebbe non includere questi dati: usa gli slider)"
+            else:
+                hint = ""
             inj_msg = f"non attivi: {msg[:110]}{hint}"
             print(f"  ! infortuni non disponibili ({msg})")
     tag = " [BACKTEST: solo dati precedenti]" if backtest else ""
@@ -748,8 +800,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             odds_msg += f" ({len(odds_events)} eventi ricevuti; le partite gia' iniziate non hanno quote)"
         if odds_note:
             odds_msg += f" - {odds_note}"
-    if inj_msg == "attivi":
-        inj_msg = f"attivi ({n_inj} segnalazioni sulla tua rosa)"
+    if inj_msg.startswith("attivi"):
+        inj_msg += f" - {n_inj} segnalazioni sulla tua rosa" if inj_msg != "attivi" else f" ({n_inj} segnalazioni sulla tua rosa)"
     info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg}
     if check_only:
         return None, None, problems, info
@@ -881,6 +933,8 @@ input[type=range]{flex:1;accent-color:var(--acc)}
 label.o{font-size:12px;white-space:nowrap}
 button,select{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:7px 11px;font-size:13px}
 select{background:var(--card);color:var(--fg);border:1px solid var(--line)}
+textarea{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;font-family:inherit}
+details summary{cursor:pointer;font-weight:600;font-size:14px}
 </style></head><body>
 <h1>Fanta Predictor</h1>
 <div class="s" id="meta"></div>
@@ -895,6 +949,11 @@ select{background:var(--card);color:var(--fg);border:1px solid var(--line)}
 <div id="cal" class="card" style="display:none"></div>
 <h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
 <div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
+<details class="card"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
+  <div class="s" style="margin:6px 0">Una riga per giocatore, copiata da app o siti. Riconosco i giocatori della tua rosa: "Maignan 100%" imposta la titolarit&agrave;, "Pulisic infortunato" o "Lucum&igrave; squalificato" lo mette fuori, "Hojlund titolare" lo porta al 90%.</div>
+  <textarea id="paste" rows="6" placeholder="Maignan 100%&#10;Pulisic infortunato&#10;Lucum&igrave; squalificato"></textarea>
+  <div class="bh" style="margin-top:6px"><select id="pmode"><option value="auto">Riconosci dalla riga</option><option value="out">Sono tutti indisponibili</option><option value="start">Sono tutti probabili titolari</option></select>
+  <button id="apply">Applica</button></div><div class="info" id="pout"></div></details>
 <div id="roster"></div>
 <p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
 <script>
@@ -996,6 +1055,31 @@ if (D.calib && D.calib.n > 0) { const C = document.getElementById("cal"), c = D.
 document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg + " \u00b7 infortuni: " + D.inj_msg;
 document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
+
+const norm = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\u00f8/gi, "o").replace(/\u00e6/gi, "ae").replace(/\u0142/gi, "l").replace(/\u0111/gi, "d").replace(/\u00df/g, "ss").toLowerCase();
+const toks = t => norm(t).replace(/[^a-z ]/g, " ").split(/\s+/).filter(Boolean);
+function applyPaste(){
+  const lines = document.getElementById("paste").value.split(/\n/).map(x => x.trim()).filter(Boolean), mode = document.getElementById("pmode").value;
+  const done = [], seen = new Set(); let skipped = 0;
+  lines.forEach(line => {
+    const lt = new Set(toks(line)), has = pre => [...lt].some(t => t.startsWith(pre));
+    const found = S.filter(s => { const l = toks(s.Giocatore).filter(t => t.length > 1); return l.length && l.every(t => lt.has(t)); });
+    if (!found.length) { skipped++; return; }
+    const m = line.match(/(\d{1,3})\s*%/);
+    found.forEach(s => {
+      let what = null;
+      if (m) { s.p = Math.max(0, Math.min(100, Math.round(+m[1] / 5) * 5)); s.disp = true; what = s.p + "%"; }
+      else if (mode === "out" || has("infortun") || has("squalific") || has("indisponibil") || has("assent") || has("lesion") || lt.has("out") || lt.has("fuori") || lt.has("stop")) { s.disp = false; what = "fuori"; }
+      else if (mode === "start" || has("titolar")) { s.p = 90; s.disp = true; what = "90%"; }
+      else if (has("dubbio") || has("ballottagg") || has("incerto")) { s.p = 50; s.disp = true; what = "50%"; }
+      if (what && !seen.has(s.Giocatore)) { seen.add(s.Giocatore); done.push(s.Giocatore + " " + what); }
+    });
+  });
+  save(); build(); update();
+  document.getElementById("pout").textContent = (done.length ? "Applicato: " + done.join(", ") + ". " : "Nessun giocatore riconosciuto. ") +
+    (skipped ? skipped + " righe senza giocatori della tua rosa." : "");
+}
+document.getElementById("apply").addEventListener("click", applyPaste);
 build(); update();
 </script></body></html>"""
 
@@ -1090,10 +1174,11 @@ def main(argv=None):
         print("Quote bookmaker: nessuna ODDS_API_KEY impostata, uso solo xG.")
 
     inj_key = os.environ.get("API_FOOTBALL_KEY", "").strip() or None
+    inj_site = os.environ.get("API_FOOTBALL_SITE", "api-football.com").strip().lower() or "api-football.com"
     if inj_key:
-        print(f"API_FOOTBALL_KEY trovata ({len(inj_key)} caratteri)")
+        print(f"API_FOOTBALL_KEY trovata ({len(inj_key)} caratteri), servizio: {inj_site}")
     df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
-                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key)
+                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site)
     if a.check or df is None:
         return
     Path(a.storico).mkdir(parents=True, exist_ok=True)
