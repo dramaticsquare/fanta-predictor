@@ -1,26 +1,26 @@
 Giocatore,Squadra,Ruolo,Disp,Avversario,Data,xG,xA,P_gol,P_ass,CS%,Titolare%,Fantavoto,FV_raw,Voto,EV,Rif,GolSq,GolOpp,Fonte,Nota
-Yildiz,Juventus,A,False,vs Atalanta,20/09,0.24,0.26,21,23,,22,7.14,6.949,5.8,7.23,7.256,1.98,0.49,xG+quote,partita gia' iniziata/giocata
-Maldini,Cagliari,A,True,@ Udinese,19/09,0.3,0.1,26,10,,91,7.17,6.975,5.9,7.18,7.256,1.31,1.56,xG,partita gia' iniziata/giocata
-Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.29,0.09,25,8,,83,7.14,6.94,5.8,7.16,7.256,1.5,1.22,xG,partita gia' iniziata/giocata
-Laurientè,Sassuolo,A,True,@ Monza,18/09,0.23,0.24,21,21,,100,7.06,6.864,5.7,7.06,7.256,1.41,2.05,xG,partita gia' iniziata/giocata
-Conceicao,Juventus,C,True,vs Atalanta,20/09,0.25,0.16,22,15,,100,7.03,6.903,6.8,7.03,6.483,1.98,0.49,xG+quote,partita gia' iniziata/giocata
-Stulic,Lecce,A,True,@ AC Milan,20/09,0.14,0.04,13,4,,70,6.64,6.441,5.1,6.83,7.256,0.87,2.37,xG+quote,
-Ramon,Como,D,True,@ Frosinone,20/09,0.21,0.07,19,7,24.0,100,6.74,6.753,6.7,6.74,6.28,2.18,1.44,xG,partita gia' iniziata/giocata
-De Ketelaere,Atalanta,A,True,@ Juventus,20/09,0.05,0.07,5,7,,75,6.37,6.171,4.7,6.59,7.256,0.49,1.98,xG+quote,partita gia' iniziata/giocata
-Pulisic,Milan,C,True,vs Lecce,20/09,0.19,0.13,17,13,,19,6.89,6.761,6.6,6.56,6.483,2.37,0.87,xG+quote,
+Yildiz,Juventus,A,False,vs Atalanta,20/09,0.24,0.26,22,23,,11,7.15,6.958,5.8,7.24,7.255,2.18,0.81,xG,partita gia' iniziata/giocata
+Maldini,Cagliari,A,True,@ Udinese,19/09,0.3,0.1,26,10,,91,7.17,6.974,5.9,7.18,7.255,1.31,1.56,xG,partita gia' iniziata/giocata
+Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.29,0.09,25,8,,83,7.13,6.939,5.8,7.15,7.255,1.5,1.22,xG,partita gia' iniziata/giocata
+Conceicao,Juventus,C,True,vs Atalanta,20/09,0.28,0.16,25,15,,100,7.12,6.992,7.0,7.12,6.483,2.18,0.81,xG,partita gia' iniziata/giocata
+Laurientè,Sassuolo,A,True,@ Monza,18/09,0.23,0.24,21,21,,100,7.06,6.863,5.7,7.06,7.255,1.41,2.05,xG,partita gia' iniziata/giocata
+Stulic,Lecce,A,True,@ AC Milan,20/09,0.1,0.03,10,3,,70,6.51,6.314,4.9,6.74,7.255,0.63,2.47,xG+quote,partita gia' iniziata/giocata
+Ramon,Como,D,True,@ Frosinone,20/09,0.21,0.07,19,7,24.0,100,6.74,6.753,6.7,6.74,6.28,2.17,1.44,xG,partita gia' iniziata/giocata
+De Ketelaere,Atalanta,A,True,@ Juventus,20/09,0.09,0.13,9,12,,80,6.54,6.348,4.9,6.69,7.255,0.81,2.18,xG,partita gia' iniziata/giocata
+Pulisic,Milan,C,True,vs Lecce,20/09,0.19,0.14,18,13,,19,6.92,6.789,6.7,6.56,6.483,2.47,0.63,xG+quote,partita gia' iniziata/giocata
 Cristante,Roma,C,True,vs Inter,19/09,0.08,0.07,7,6,,100,6.49,6.367,6.0,6.49,6.483,2.01,1.6,xG,partita gia' iniziata/giocata
-Orsolini,Bologna,C,False,vs Torino,19/09,0.1,0.03,9,3,,27,6.44,6.318,5.9,6.47,6.483,1.52,1.06,xG,partita gia' iniziata/giocata
-Mancini,Roma,D,True,vs Inter,19/09,0.1,0.12,10,11,20.0,100,6.47,6.485,6.3,6.47,6.28,2.01,1.6,xG,partita gia' iniziata/giocata
-Liberali,Como,C,True,@ Frosinone,20/09,0.01,0.01,1,1,,12,6.18,6.056,5.6,6.45,6.483,2.18,1.44,xG,pochi dati - partita gia' iniziata/giocata
+Orsolini,Bologna,C,False,vs Torino,19/09,0.1,0.03,9,3,,27,6.45,6.318,5.9,6.47,6.483,1.53,1.06,xG,partita gia' iniziata/giocata
+Mancini,Roma,D,True,vs Inter,19/09,0.1,0.12,10,11,20.0,100,6.47,6.486,6.3,6.47,6.28,2.01,1.6,xG,partita gia' iniziata/giocata
+Liberali,Como,C,True,@ Frosinone,20/09,0.01,0.01,1,1,,12,6.18,6.056,5.6,6.45,6.483,2.17,1.44,xG,pochi dati - partita gia' iniziata/giocata
 Bernabè,Parma,C,True,vs Genoa,20/09,0.05,0.08,5,8,,33,6.32,6.195,5.8,6.43,6.483,1.09,1.27,xG,partita gia' iniziata/giocata
-Alajbegovic,Juventus,C,True,vs Atalanta,20/09,0.09,0.06,9,6,,84,6.38,6.255,5.8,6.4,6.483,1.98,0.49,xG+quote,pochi dati - partita gia' iniziata/giocata
-Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,6,6,,95,6.37,6.248,5.8,6.38,6.483,1.5,1.22,xG,partita gia' iniziata/giocata
-Miranda J.,Bologna,D,True,vs Torino,19/09,0.03,0.16,3,15,35.0,76,6.39,6.397,6.2,6.36,6.28,1.52,1.06,xG,partita gia' iniziata/giocata
+Alajbegovic,Juventus,C,True,vs Atalanta,20/09,0.09,0.06,9,6,,69,6.4,6.273,5.9,6.43,6.483,2.18,0.81,xG,pochi dati - partita gia' iniziata/giocata
+Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,6,6,,95,6.37,6.247,5.8,6.38,6.483,1.5,1.22,xG,partita gia' iniziata/giocata
+Miranda J.,Bologna,D,True,vs Torino,19/09,0.03,0.16,3,15,35.0,76,6.39,6.398,6.2,6.36,6.28,1.53,1.06,xG,partita gia' iniziata/giocata
 Wesley,Roma,D,True,vs Inter,19/09,0.05,0.18,5,16,20.0,70,6.39,6.398,6.2,6.35,6.28,2.01,1.6,xG,partita gia' iniziata/giocata
-Lucumì,Juventus,D,True,vs Atalanta,20/09,0.04,0.04,3,4,61.0,50,6.34,6.349,6.1,6.31,6.28,1.98,0.49,xG+quote,partita gia' iniziata/giocata
-Gabbia,Milan,D,True,vs Lecce,20/09,0.04,0.02,4,2,42.0,32,6.34,6.348,6.1,6.3,6.28,2.37,0.87,xG+quote,
-Diego Carlos,Parma,D,True,vs Genoa,20/09,0.07,0.02,7,2,28.0,56,6.29,6.299,6.0,6.28,6.28,1.09,1.27,xG,partita gia' iniziata/giocata
+Gabbia,Milan,D,True,vs Lecce,20/09,0.04,0.02,4,2,53.0,32,6.4,6.41,6.2,6.32,6.28,2.47,0.63,xG+quote,partita gia' iniziata/giocata
+Lucumì,Juventus,D,True,vs Atalanta,20/09,0.04,0.05,4,5,45.0,67,6.28,6.292,6.0,6.28,6.28,2.18,0.81,xG,partita gia' iniziata/giocata
+Diego Carlos,Parma,D,True,vs Genoa,20/09,0.07,0.02,7,2,28.0,56,6.29,6.3,6.0,6.28,6.28,1.09,1.27,xG,partita gia' iniziata/giocata
 Badiashile,Napoli,D,True,@ Fiorentina,20/09,0.0,0.0,0,0,29.0,10,6.18,6.191,5.8,6.27,6.28,1.5,1.22,xG,partita gia' iniziata/giocata
-Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,42.0,100,5.29,5.292,7.0,5.29,4.599,2.37,0.87,xG+quote,
-Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,42.0,0,5.32,5.321,7.1,4.6,4.599,2.37,0.87,xG+quote,nessun dato Understat: usa lo slider
-Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,0,0,9.0,100,3.65,3.646,4.6,3.65,4.599,0.87,2.37,xG+quote,
+Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,53.0,100,5.59,5.589,7.5,5.59,4.6,2.47,0.63,xG+quote,partita gia' iniziata/giocata
+Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,53.0,0,5.62,5.618,7.5,4.6,4.6,2.47,0.63,xG+quote,nessun dato Understat: usa lo slider - partita gia' iniziata/giocata
+Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,0,0,8.0,100,3.54,3.544,4.4,3.54,4.6,0.63,2.47,xG+quote,partita gia' iniziata/giocata
