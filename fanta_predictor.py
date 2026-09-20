@@ -77,7 +77,7 @@ CFG = {
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
     "fc_shrink": 20,             # idem per la correzione delle percentuali di Fantacalcio.it
     "tz": "Europe/Rome",
-    "version": "20/09 - lettore Fantacalcio.it",
+    "version": "21/09 - formazione modificabile",
     "cache_hours": 12,
 }
 
@@ -1127,7 +1127,7 @@ h1{font-size:20px;margin:12px 0 2px}h2{font-size:15px;margin:18px 0 8px}.s{color
 .mini div{font-size:12.5px;line-height:1.4}.mini i{font-style:normal;font-weight:700;color:var(--acc);margin-right:4px}
 .card{background:var(--card);border-radius:12px;padding:10px 12px;margin-bottom:10px}
 .ln{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:14px;flex-wrap:wrap}
-.ln b{min-width:16px}.tag{font-size:12px;color:var(--mut)}
+.ln b{min-width:16px}.tap{cursor:pointer;border-radius:8px;padding:6px 4px}.tap:active{background:var(--line)}.tag{font-size:12px;color:var(--mut)}
 .row{background:var(--card);border-radius:12px;padding:9px 12px;margin-bottom:8px;border-left:4px solid transparent}
 .row.in{border-left-color:#16a34a}.row.out{opacity:.5}
 .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -1150,7 +1150,10 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
     <select id="mod" aria-label="Modulo"></select><button id="pbtn">Incolla elenco</button><button id="copy">Copia</button></div>
   <div class="mini" id="mini"></div>
 </div>
-<h2>Dettaglio formazione</h2><div class="card" id="lineup"></div>
+<h2>Dettaglio formazione</h2>
+<div class="s" style="margin-bottom:6px">Tocca un titolare per mandarlo in panchina, o un panchinaro per farlo giocare: al suo posto entra il migliore disponibile. &#128274; = scelta tua, tocca di nuovo per tornare in automatico.</div>
+<div class="info" id="warn" style="display:none;color:#d97706;margin-bottom:6px"></div>
+<div class="card" id="lineup"></div>
 <h2>Panchina (in ordine)</h2><div class="card" id="bench"></div>
 <div id="probs" class="card" style="display:none"></div>
 <div id="cal" class="card" style="display:none"></div>
@@ -1172,54 +1175,67 @@ try { saved = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) {}
 let modSel = saved._mod || "auto", cur = null, inSet = new Set();
 const S = D.players.map(p => Object.assign({}, p, {
   p0: p["Titolare%"], p: (saved[p.Giocatore] && saved[p.Giocatore].p != null) ? saved[p.Giocatore].p : p["Titolare%"],
-  disp: (saved[p.Giocatore] && saved[p.Giocatore].disp != null) ? saved[p.Giocatore].disp : !!p.Disp }));
+  disp: (saved[p.Giocatore] && saved[p.Giocatore].disp != null) ? saved[p.Giocatore].disp : !!p.Disp,
+  force: (saved[p.Giocatore] && saved[p.Giocatore].f) || 0 }));            // 1 = fisso titolare, -1 = fisso in panchina
 const ev = s => (s.p/100)*s.Fantavoto + (1 - s.p/100)*s.Rif;
 const col = v => "hsl(" + (120*(Math.max(3,Math.min(9,v))-3)/6).toFixed(0) + ",62%,40%)";
-function save(){ const o = {}; S.forEach(s => { if (s.p !== s.p0 || s.disp !== !!s.Disp) o[s.Giocatore] = {p:s.p, disp:s.disp}; });
+function save(){ const o = {}; S.forEach(s => { if (s.p !== s.p0 || s.disp !== !!s.Disp || s.force) o[s.Giocatore] = {p:s.p, disp:s.disp, f:s.force}; });
   if (modSel !== "auto") o._mod = modSel; try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
-function calc(mods){
+function calc(mods, useForce){
   let best = null;
   for (const mod of mods){
     const [d,c,a] = mod.split("-").map(Number), need = {P:1, D:d, C:c, A:a};
     let tot = 0, pick = [], ok = true;
     for (const r of ["P","D","C","A"]){
-      let g = S.filter(s => s.Ruolo === r && s.disp);
-      const gok = g.filter(s => s.p >= D.minp*100);
-      g = (gok.length >= need[r] ? gok : g).sort((x,y) => ev(y) - ev(x));
-      if (g.length < need[r]) { ok = false; break; }
-      const t = g.slice(0, need[r]); pick.push(...t); tot += t.reduce((q,s) => q + ev(s), 0);
+      const fin = useForce ? S.filter(s => s.Ruolo === r && s.force === 1) : [];          // scelte fisse: giocano comunque
+      if (fin.length > need[r]) { ok = false; break; }
+      let g = S.filter(s => s.Ruolo === r && s.disp && !fin.includes(s) && !(useForce && s.force === -1));
+      const gok = g.filter(s => s.p >= D.minp*100), left = need[r] - fin.length;
+      g = (gok.length >= left ? gok : g).sort((x,y) => ev(y) - ev(x));
+      if (g.length < left) { ok = false; break; }
+      const t = fin.concat(g.slice(0, left)); pick.push(...t); tot += t.reduce((q,s) => q + ev(s), 0);
     }
     if (ok && (!best || tot > best.tot)) best = {mod, tot, pick};
   }
   return best;
 }
+let warnMsg = "";
 function bestLineup(){
-  if (modSel !== "auto") { const b = calc([modSel]); if (b) return b; }
-  return calc(D.modules);
+  warnMsg = "";
+  if (modSel !== "auto") { const b = calc([modSel], true); if (b) return b; warnMsg = "Il modulo " + modSel + " non \u00e8 compatibile con le tue scelte fisse: uso il migliore possibile."; }
+  const b2 = calc(D.modules, true); if (b2) return b2;
+  warnMsg = "Le scelte fisse (\ud83d\udd12) non entrano in nessun modulo: le ignoro. Togline qualcuna.";
+  return calc(D.modules, false);
 }
 function mk(tag, cls, txt){ const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
-function line(s){
-  const l = mk("div","ln"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",s.Giocatore));
-  l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%")); return l;
+function line(s, where){
+  const l = mk("div","ln tap"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",(s.force ? "\ud83d\udd12 " : "") + s.Giocatore));
+  l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%" + (s.force === -1 ? " \u00b7 tua scelta: panchina" : s.force === 1 ? " \u00b7 tua scelta: titolare" : "")));
+  l.addEventListener("click", () => {
+    if (s.force) s.force = 0; else s.force = (where === "xi") ? -1 : 1;              // titolare -> panchina, panchinaro -> titolare, tocca ancora = automatico
+    save(); update(); });
+  return l;
 }
 const byRole = (b, r) => b.pick.filter(s => s.Ruolo === r).sort((x,y) => ev(y)-ev(x));
 function update(){
   const b = bestLineup(); cur = b;
-  const L = document.getElementById("lineup"), B = document.getElementById("bench"), M = document.getElementById("mini");
+  const L = document.getElementById("lineup"), B = document.getElementById("bench"), M = document.getElementById("mini"), W = document.getElementById("warn");
   L.textContent = ""; B.textContent = ""; M.textContent = ""; inSet = new Set();
+  W.textContent = warnMsg; W.style.display = warnMsg ? "block" : "none";
   if (!b) { L.textContent = "Nessun modulo valido con i giocatori disponibili."; document.getElementById("lt").textContent = "Formazione non disponibile"; }
   else {
     document.getElementById("lt").textContent = b.mod + " \u00b7 atteso " + b.tot.toFixed(1);
     ["P","D","C","A"].forEach(r => { const g = byRole(b, r), d = mk("div"); d.appendChild(mk("i",null,r));
-      d.appendChild(document.createTextNode(g.map(s => s.Giocatore).join(" \u00b7 "))); M.appendChild(d);
-      g.forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s)); }); });
+      d.appendChild(document.createTextNode(g.map(s => s.Giocatore + (s.force === 1 ? "*" : "")).join(" \u00b7 "))); M.appendChild(d);
+      g.forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s, "xi")); }); });
   }
-  S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((x,y) => ev(y)-ev(x)).forEach(s => B.appendChild(line(s)));
+  S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((x,y) => ev(y)-ev(x)).forEach(s => B.appendChild(line(s, "bn")));
   document.querySelectorAll(".row").forEach(r => { const s = S[+r.dataset.i];
     r.classList.toggle("in", inSet.has(s.Giocatore)); r.classList.toggle("out", !s.disp);
     const pv = r.querySelector(".pv"); pv.textContent = s.p + "%" + (s.p !== s.p0 ? " (modello " + s.p0 + "%)" : "");
     pv.classList.toggle("chg", s.p !== s.p0); });
 }
+
 function lineupText(){
   if (!cur) return "";
   const nm = r => byRole(cur, r).map(s => s.Giocatore).join(", ");
@@ -1269,7 +1285,7 @@ if (D.fc) { const C = document.getElementById("cal"), f = D.fc; C.style.display 
   if (f.out_n) C.appendChild(mk("div", "info", "Tra gli infortunati/squalificati indicati, ne hanno giocato " + f.out_wrong + " su " + f.out_n + "."));
 }
 document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg + " \u00b7 infortuni: " + D.inj_msg;
-document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; }); modSel = "auto"; sel.value = "auto";
+document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; s.force = 0; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
 
 const norm = t => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\u00f8/gi, "o").replace(/\u00e6/gi, "ae").replace(/\u0142/gi, "l").replace(/\u0111/gi, "d").replace(/\u00df/g, "ss").toLowerCase();
