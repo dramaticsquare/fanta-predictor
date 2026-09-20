@@ -1,26 +1,26 @@
 Giocatore,Squadra,Ruolo,Disp,Avversario,Data,xG,xA,P_gol,P_ass,CS%,Titolare%,Fantavoto,FV_raw,Voto,EV,Rif,GolSq,GolOpp,Fonte,Nota
-Yildiz,Juventus,A,False,vs Atalanta,20/09,0.26,0.28,23,25,,22,7.24,7.039,6.0,7.25,7.256,2.16,0.86,xG,
-Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.31,0.09,26,9,,100,7.19,6.989,5.9,7.19,7.256,1.42,1.25,xG,partita gia' iniziata/giocata
-Maldini,Cagliari,A,True,@ Udinese,19/09,0.3,0.1,26,10,,91,7.17,6.974,5.9,7.18,7.256,1.31,1.56,xG,partita gia' iniziata/giocata
-Conceicao,Juventus,C,True,vs Atalanta,20/09,0.27,0.17,24,16,,100,7.11,6.985,6.9,7.11,6.481,2.16,0.86,xG,
-Laurientè,Sassuolo,A,True,@ Monza,18/09,0.23,0.24,21,21,,100,7.06,6.862,5.7,7.06,7.256,1.41,2.05,xG,partita gia' iniziata/giocata
-Stulic,Lecce,A,True,@ AC Milan,20/09,0.19,0.05,17,5,,70,6.79,6.595,5.3,6.93,7.256,1.16,2.29,xG,
-Ramon,Como,D,True,@ Frosinone,20/09,0.21,0.04,19,4,28.0,100,6.75,6.764,6.7,6.75,6.28,2.1,1.28,xG,partita gia' iniziata/giocata
-De Ketelaere,Atalanta,A,True,@ Juventus,20/09,0.09,0.13,9,12,,75,6.54,6.343,4.9,6.72,7.256,0.86,2.16,xG,
-Pulisic,Milan,C,True,vs Lecce,20/09,0.18,0.13,16,12,,19,6.87,6.738,6.6,6.55,6.481,2.29,1.16,xG,
-Cristante,Roma,C,True,vs Inter,19/09,0.08,0.07,7,6,,100,6.49,6.367,6.0,6.49,6.481,2.02,1.6,xG,partita gia' iniziata/giocata
-Orsolini,Bologna,C,False,vs Torino,19/09,0.1,0.03,9,3,,27,6.44,6.317,5.9,6.47,6.481,1.53,1.06,xG,partita gia' iniziata/giocata
-Mancini,Roma,D,True,vs Inter,19/09,0.1,0.12,10,11,20.0,100,6.47,6.486,6.3,6.47,6.28,2.02,1.6,xG,partita gia' iniziata/giocata
-Liberali,Como,C,True,@ Frosinone,20/09,0.01,0.01,1,1,,18,6.18,6.053,5.5,6.43,6.481,2.1,1.28,xG,pochi dati - partita gia' iniziata/giocata
-Bernabè,Parma,C,True,vs Genoa,20/09,0.05,0.09,5,8,,42,6.33,6.201,5.8,6.42,6.481,1.12,1.34,xG,partita gia' iniziata/giocata
-Alajbegovic,Juventus,C,True,vs Atalanta,20/09,0.1,0.07,10,7,,84,6.41,6.284,5.9,6.42,6.481,2.16,0.86,xG,pochi dati
-Miranda J.,Bologna,D,True,vs Torino,19/09,0.03,0.16,3,15,35.0,76,6.39,6.398,6.2,6.36,6.28,1.53,1.06,xG,partita gia' iniziata/giocata
-Wesley,Roma,D,True,vs Inter,19/09,0.05,0.18,5,16,20.0,70,6.39,6.399,6.2,6.35,6.28,2.02,1.6,xG,partita gia' iniziata/giocata
-Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,6,6,,93,6.34,6.217,5.8,6.35,6.481,1.42,1.25,xG,partita gia' iniziata/giocata
-Gabbia,Milan,D,True,vs Lecce,20/09,0.04,0.02,4,2,31.0,32,6.28,6.292,6.0,6.28,6.28,2.29,1.16,xG,
-Lucumì,Juventus,D,True,vs Atalanta,20/09,0.04,0.04,4,4,42.0,50,6.26,6.267,6.0,6.27,6.28,2.16,0.86,xG,
-Diego Carlos,Parma,D,True,vs Genoa,20/09,0.06,0.02,6,2,26.0,40,6.26,6.277,6.0,6.27,6.28,1.12,1.34,xG,partita gia' iniziata/giocata
-Badiashile,Napoli,D,True,@ Fiorentina,20/09,0.0,0.0,0,0,29.0,18,6.18,6.187,5.8,6.26,6.28,1.42,1.25,xG,partita gia' iniziata/giocata
-Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,31.0,100,4.95,4.951,6.5,4.95,4.6,2.29,1.16,xG,
-Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,31.0,0,4.98,4.98,6.6,4.6,4.6,2.29,1.16,xG,nessun dato Understat: usa lo slider
-Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,0,0,10.0,100,3.72,3.724,4.7,3.72,4.6,1.16,2.29,xG,
+Yildiz,Juventus,A,False,vs Atalanta,20/09,0.26,0.28,23,25,,22,7.23,7.037,6.0,7.25,7.255,2.16,0.86,xG,
+Maldini,Cagliari,A,True,@ Udinese,19/09,0.3,0.1,26,10,,91,7.17,6.975,5.9,7.18,7.255,1.31,1.56,xG,partita gia' iniziata/giocata
+Hojlund,Napoli,A,True,@ Fiorentina,20/09,0.29,0.09,25,8,,83,7.14,6.939,5.8,7.16,7.255,1.5,1.22,xG,partita gia' iniziata/giocata
+Conceicao,Juventus,C,True,vs Atalanta,20/09,0.27,0.17,24,16,,100,7.11,6.984,6.9,7.11,6.48,2.16,0.86,xG,
+Laurientè,Sassuolo,A,True,@ Monza,18/09,0.23,0.24,21,21,,100,7.06,6.863,5.7,7.06,7.255,1.41,2.05,xG,partita gia' iniziata/giocata
+Stulic,Lecce,A,True,@ AC Milan,20/09,0.19,0.05,17,5,,70,6.79,6.595,5.3,6.93,7.255,1.16,2.29,xG,
+Ramon,Como,D,True,@ Frosinone,20/09,0.22,0.04,19,4,28.0,100,6.75,6.765,6.7,6.75,6.281,2.1,1.28,xG,partita gia' iniziata/giocata
+De Ketelaere,Atalanta,A,True,@ Juventus,20/09,0.09,0.13,9,12,,75,6.54,6.344,4.9,6.72,7.255,0.86,2.16,xG,
+Pulisic,Milan,C,True,vs Lecce,20/09,0.18,0.13,16,12,,19,6.86,6.737,6.6,6.55,6.48,2.29,1.16,xG,
+Cristante,Roma,C,True,vs Inter,19/09,0.08,0.07,7,6,,100,6.49,6.366,6.0,6.49,6.48,2.01,1.6,xG,partita gia' iniziata/giocata
+Orsolini,Bologna,C,False,vs Torino,19/09,0.1,0.03,9,3,,27,6.44,6.317,5.9,6.47,6.48,1.52,1.06,xG,partita gia' iniziata/giocata
+Mancini,Roma,D,True,vs Inter,19/09,0.1,0.12,10,11,20.0,100,6.47,6.486,6.3,6.47,6.281,2.01,1.6,xG,partita gia' iniziata/giocata
+Liberali,Como,C,True,@ Frosinone,20/09,0.01,0.01,1,1,,18,6.18,6.054,5.6,6.43,6.48,2.1,1.28,xG,pochi dati - partita gia' iniziata/giocata
+Bernabè,Parma,C,True,vs Genoa,20/09,0.05,0.09,5,8,,42,6.33,6.201,5.8,6.42,6.48,1.12,1.34,xG,partita gia' iniziata/giocata
+Alajbegovic,Juventus,C,True,vs Atalanta,20/09,0.1,0.07,9,7,,84,6.41,6.284,5.9,6.42,6.48,2.16,0.86,xG,pochi dati
+Lobotka,Napoli,C,True,@ Fiorentina,20/09,0.06,0.07,6,6,,95,6.37,6.247,5.8,6.38,6.48,1.5,1.22,xG,partita gia' iniziata/giocata
+Miranda J.,Bologna,D,True,vs Torino,19/09,0.03,0.16,3,15,35.0,76,6.39,6.398,6.2,6.36,6.281,1.52,1.06,xG,partita gia' iniziata/giocata
+Wesley,Roma,D,True,vs Inter,19/09,0.05,0.18,5,16,20.0,70,6.39,6.398,6.2,6.35,6.281,2.01,1.6,xG,partita gia' iniziata/giocata
+Gabbia,Milan,D,True,vs Lecce,20/09,0.04,0.02,4,2,31.0,32,6.28,6.291,6.0,6.28,6.281,2.29,1.16,xG,
+Lucumì,Juventus,D,True,vs Atalanta,20/09,0.04,0.04,4,4,42.0,50,6.25,6.267,6.0,6.27,6.281,2.16,0.86,xG,
+Diego Carlos,Parma,D,True,vs Genoa,20/09,0.06,0.02,6,2,26.0,40,6.26,6.276,6.0,6.27,6.281,1.12,1.34,xG,partita gia' iniziata/giocata
+Badiashile,Napoli,D,True,@ Fiorentina,20/09,0.0,0.0,0,0,29.0,10,6.18,6.191,5.8,6.27,6.281,1.5,1.22,xG,partita gia' iniziata/giocata
+Maignan,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,31.0,100,4.95,4.949,6.5,4.95,4.599,2.29,1.16,xG,
+Torriani,Milan,P,True,vs Lecce,20/09,0.0,0.0,0,0,31.0,0,4.98,4.978,6.6,4.6,4.599,2.29,1.16,xG,nessun dato Understat: usa lo slider
+Falcone,Lecce,P,True,@ AC Milan,20/09,0.0,0.0,0,0,10.0,100,3.73,3.726,4.7,3.73,4.599,1.16,2.29,xG,
