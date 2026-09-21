@@ -1,57 +1,128 @@
 # VOTI REALI DELLA TUA LEGA - servono alla calibrazione del modello.
 # Formato: un blocco per giornata. Riga "# giornata: N" (N = numero della giornata di Serie A),
-# poi una riga per giocatore: nome, voto, fantavoto (come nell'app; "-" o "sv" = senza voto).
-# I nomi devono essere uguali a quelli di rosa.csv. Giornate 3 e 4 trascritte dagli screenshot: controlla qualche riga.
+# poi una riga per giocatore: nome, voto, fantavoto (come nell'app; "-" o "sv" = senza voto),
+# piu' una quarta colonna facoltativa: T = schierato titolare, P = in panchina (serve alla pagella).
+# I nomi devono essere uguali a quelli di rosa.csv. Giornate 1-5 trascritte dagli screenshot: controlla qualche riga.
+# Giornate 1-2: dalle pagelle di Fantacalcio.it; i giocatori non elencati non hanno avuto voto.
 giocatore,voto,fantavoto
+
+# --- Giornata 1: pagelle Fantacalcio.it (non c'e' la tua formazione) ---
+# giornata: 1
+De Ketelaere,6,6
+Miranda J.,6,6
+Orsolini,5.5,5.5
+Maldini,6,6
+Ramon,6,6
+Liberali,6,6
+Conceicao,6.5,7.5
+Yildiz,5.5,5.5
+Falcone,7,7
+Stulic,5.5,5.5
+Maignan,6,5
+Gabbia,6,6
+Lobotka,6.5,6.5
+Hojlund,5.5,5.5
+Bernabè,6,6
+Mancini,6.5,6.5
+Wesley,6.5,6.5
+Cristante,6.5,6.5
+Laurientè,6,6
+
+# --- Giornata 2: pagelle Fantacalcio.it (non c'e' la tua formazione) ---
+# giornata: 2
+De Ketelaere,5.5,5.5
+Orsolini,6,6
+Maldini,5.5,5.5
+Ramon,6,6
+Lucumì,5.5,5
+Alajbegovic,5.5,5.5
+Conceicao,6.5,6.5
+Falcone,5.5,1.5
+Stulic,5,5
+Maignan,6,6
+Gabbia,sv,-
+Lobotka,6,6
+Hojlund,7,10
+Bernabè,5.5,5.5
+Mancini,6.5,7.5
+Wesley,7,8
+Cristante,6.5,6.5
+Laurientè,6.5,6
 
 # --- Giornata 3: Berlusca F.C. - ADHD Ringo 4-2 (88.5 - 74) ---
 # giornata: 3
-Maignan,6,5
-Mancini,5,5
-Ramon,6,6
-Miranda J.,6.5,7.5
-Wesley,7,7
-Conceicao,6.5,7.5
-Lobotka,6.5,6.5
-Cristante,6,6
-Laurientè,6.5,6.5
-Hojlund,7,10
-De Ketelaere,6,6
-Falcone,6.5,5
-Diego Carlos,5.5,5.5
-Lucumì,6.5,6.5
-Bernabè,-,-
-Pulisic,-,-
-Alajbegovic,5.5,5.5
-Maldini,7,11
-Stulic,5.5,5.5
-Badiashile,5,5
-Liberali,sv,sv
-Torriani,-,-
-Gabbia,-,-
+Maignan,6,5,T
+Mancini,5,5,T
+Ramon,6,6,T
+Miranda J.,6.5,7.5,T
+Wesley,7,7,T
+Conceicao,6.5,7.5,T
+Lobotka,6.5,6.5,T
+Cristante,6,6,T
+Laurientè,6.5,6.5,T
+Hojlund,7,10,T
+De Ketelaere,6,6,T
+Falcone,6.5,5,P
+Diego Carlos,5.5,5.5,P
+Lucumì,6.5,6.5,P
+Bernabè,-,-,P
+Pulisic,-,-,P
+Alajbegovic,5.5,5.5,P
+Maldini,7,11,P
+Stulic,5.5,5.5,P
+Badiashile,5,5,P
+Liberali,sv,sv,P
+Torriani,-,-,P
+Gabbia,-,-,P
 
 # --- Giornata 4: ADHD Ringo - Roggers FC 1-1 (69.5 - 70.5) ---
 # giornata: 4
-Maignan,6.5,4.5
-Mancini,7,7
-Ramon,7,10
-Lucumì,6,5.5
-Wesley,-,-
-Conceicao,5.5,5.5
-Alajbegovic,6,6
-Cristante,6,6
-Laurientè,6.5,7.5
-Hojlund,5.5,5.5
-De Ketelaere,5,5
-Falcone,5.5,3.5
-Miranda J.,5.5,5.5
-Diego Carlos,5.5,5.5
-Lobotka,7.5,11.5
-Pulisic,6.5,7
-Liberali,-,-
-Maldini,7,10
-Stulic,6,6
-Badiashile,-,-
-Bernabè,6,6
-Torriani,-,-
-Gabbia,-,-
+Maignan,6.5,4.5,T
+Mancini,7,7,T
+Ramon,7,10,T
+Lucumì,6,5.5,T
+Wesley,-,-,T
+Conceicao,5.5,5.5,T
+Alajbegovic,6,6,T
+Cristante,6,6,T
+Laurientè,6.5,7.5,T
+Hojlund,5.5,5.5,T
+De Ketelaere,5,5,T
+Falcone,5.5,3.5,P
+Miranda J.,5.5,5.5,P
+Diego Carlos,5.5,5.5,P
+Lobotka,7.5,11.5,P
+Pulisic,6.5,7,P
+Liberali,-,-,P
+Maldini,7,10,P
+Stulic,6,6,P
+Badiashile,-,-,P
+Bernabè,6,6,P
+Torriani,-,-,P
+Gabbia,-,-,P
+
+# --- Giornata 5: ADHD Ringo - Sperem 3-1 (82 - 68.5) ---
+# giornata: 5
+Maignan,6,7,T
+Mancini,6,6,T
+Ramon,5.5,5.5,T
+Lucumì,6.5,6.5,T
+Wesley,6.5,6.5,T
+Conceicao,7,9.5,T
+Pulisic,7.5,11.5,T
+Lobotka,6,6,T
+Laurientè,6,6,T
+Hojlund,5.5,5.5,T
+Maldini,7,11,T
+Falcone,6,3,P
+Miranda J.,6.5,6.5,P
+Badiashile,-,-,P
+Diego Carlos,6.5,6.5,P
+Gabbia,-,-,P
+Orsolini,6,6,P
+Alajbegovic,6.5,6.5,P
+Cristante,6.5,6.5,P
+Bernabè,-,-,P
+Liberali,-,-,P
+De Ketelaere,6,6,P
+Stulic,5.5,5.5,P

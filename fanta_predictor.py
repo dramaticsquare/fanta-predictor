@@ -74,10 +74,15 @@ CFG = {
     "doubt_factor": 0.5,         # [EURISTICA] titolarita' moltiplicata per questo se il giocatore e' "in dubbio"
     # calibrazione sui tuoi voti reali
     "calib_min_obs": 5,          # osservazioni minime per ruolo prima di applicare una correzione
+    "calib_min_round": 3,        # le giornate precedenti (rodaggio: pochi dati della stagione) non entrano nella correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
     "fc_shrink": 20,             # idem per la correzione delle percentuali di Fantacalcio.it
+    # effetto risultato: chi vince prende voti un po' piu' alti. beta = fantavoto per unita' di (P(vittoria) - P(sconfitta)).
+    # Parte da un valore prudente [EURISTICA] e viene stimato sui tuoi voti reali (con shrink verso questo valore)
+    "result_beta_prior": 0.15,
+    "result_beta_shrink": 60,
     "tz": "Europe/Rome",
-    "version": "21/09 - formazione modificabile",
+    "version": "21/09 - pagella, scadenza, effetto risultato",
     "cache_hours": 12,
 }
 
@@ -223,6 +228,13 @@ def team_strengths(hist):
     return rows, lg, hf, af
 
 
+def outcome_probs(lf, lc):
+    """P(vittoria), P(pareggio), P(sconfitta) da due Poisson indipendenti con i gol attesi della squadra e dell'avversario."""
+    M = np.outer(_pmf(max(lf, 0.05)), _pmf(max(lc, 0.05)))
+    M = M / M.sum()
+    return float(np.tril(M, -1).sum()), float(np.trace(M)), float(np.triu(M, 1).sum())
+
+
 def team_ctx(team, opp, is_home, S, lg, hf, af, odds=None):
     a_own, d_own = (S.get(team) or {"A": 1, "D": 1})["A"], (S.get(team) or {"A": 1, "D": 1})["D"]
     a_opp, d_opp = (S.get(opp) or {"A": 1, "D": 1})["A"], (S.get(opp) or {"A": 1, "D": 1})["D"]
@@ -238,7 +250,8 @@ def team_ctx(team, opp, is_home, S, lg, hf, af, odds=None):
         new_for, new_conc = w * o_for + (1 - w) * lam_for, w * o_conc + (1 - w) * lam_conc
         att_factor *= new_for / max(lam_for, 0.05)
         lam_for, lam_conc, src = new_for, new_conc, "xG+quote"
-    return {"att_factor": att_factor, "lam_for": lam_for, "lam_conc": lam_conc, "src": src}
+    pv, pn, ps = outcome_probs(lam_for, lam_conc)
+    return {"att_factor": att_factor, "lam_for": lam_for, "lam_conc": lam_conc, "src": src, "pv": pv, "pn": pn, "ps": ps}
 
 
 # ------------------------------------------------------------- GIORNATE -----
@@ -605,7 +618,7 @@ def fv_ref(role, pr, lg):
     return fv
 
 
-def project(role, prof, ctx, ref, off=0.0):
+def project(role, prof, ctx, ref, off=0.0, beta=0.0):
     """off = correzione per ruolo ricavata dalla calibrazione sui voti reali (0 se non disponibile)."""
     m = prof["exp_min"] / 90
     e_g = prof["xg90"] * ctx["att_factor"] * m
@@ -619,13 +632,15 @@ def project(role, prof, ctx, ref, off=0.0):
         fv_raw += CFG["conceded_gk"] * ctx["lam_conc"]
     if role in ("D", "C"):
         fv_raw += CFG["involvement_weight"] * prof["z_bu"]
-    fv = fv_raw + off
+    res = ctx.get("pv", 0.0) - ctx.get("ps", 0.0)          # da -1 (sconfitta certa) a +1 (vittoria certa)
+    res_eff = beta * res                                     # effetto risultato sul voto
+    fv = fv_raw + off + res_eff
     # voto previsto: 6 = giocatore medio del ruolo in partita neutra (come i voti veri del fantacalcio)
-    rating = float(np.clip(CFG["rating_center"] + CFG["rating_slope"] * (fv_raw - ref), 1, 10))
+    rating = float(np.clip(CFG["rating_center"] + CFG["rating_slope"] * (fv_raw + res_eff - ref), 1, 10))
     p_eff = min(1.0, prof["p_start"] + CFG["sub_weight"] * prof["p_sub"])
     ev = p_eff * fv + (1 - p_eff) * (ref + off)     # se non gioca, entra in media un sostituto "medio"
     return {"e_g": e_g, "e_a": e_a, "p_cs": p_cs, "fv": fv, "fv_raw": fv_raw, "rating": rating,
-            "p_eff": p_eff, "ev": ev}
+            "p_eff": p_eff, "ev": ev, "res": res, "res_eff": res_eff}
 
 
 # ============================================================== FORMAZIONE ==
@@ -687,14 +702,15 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
                                                           r=("red_cards", "sum"))
     titles = list(hist.keys())
     off = (calib or {}).get("offset", {})
+    beta = float((calib or {}).get("result_beta", CFG["result_beta_prior"]))
 
     fx = {}
     for m in fixtures:
         h, a = m["h"]["title"], m["a"]["title"]
         played = (not backtest) and (bool(m.get("isResult")) or to_local(m["datetime"]) < now)
         when_local = to_local(m["datetime"]).strftime("%Y-%m-%d %H:%M")
-        fx[h] = (a, True, when_local, played)
-        fx[a] = (h, False, when_local, played)
+        fx[h] = (a, True, when_local, played, m["datetime"])
+        fx[a] = (h, False, when_local, played, m["datetime"])
     n_played = sum(1 for v in fx.values() if v[3]) // 2
     odds_map = {} if backtest else attach_odds(odds_events, titles)
     inj_list, inj_msg, n_inj = [], ("non usati (backtest)" if backtest else "non attivi: manca il secret API_FOOTBALL_KEY"), 0
@@ -744,7 +760,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
         if team not in fx:
             problems.append(f"{r.nome}: {team} non gioca in questa giornata")
             continue
-        opp, home, when, played = fx[team]
+        opp, home, when, played, raw_dt = fx[team]
         if hit is None:
             # nessun dato (esordiente/mai in campo): media del ruolo, titolarita' 0 -> la imposti tu con lo slider
             pr = priors[role]
@@ -778,7 +794,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             nota = (nota + " - " if nota else "") + "partita gia' iniziata/giocata"
         odds = odds_map.get((team, opp) if home else (opp, team))
         ctx = team_ctx(team, opp, home, S, lg, hf, af, odds)
-        pj = project(role, prof, ctx, refs[role], off.get(role, 0.0))
+        pj = project(role, prof, ctx, refs[role], off.get(role, 0.0), beta)
         rows.append({
             "Giocatore": r.nome, "Squadra": r.squadra, "Ruolo": role, "Disp": avail,
             "Avversario": f"{'vs' if home else '@'} {opp}", "Data": f"{when[8:10]}/{when[5:7]}",
@@ -789,6 +805,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             "Fantavoto": round(pj["fv"], 2), "FV_raw": round(pj["fv_raw"], 3),
             "Voto": round(pj["rating"], 1), "EV": round(pj["ev"], 2), "Rif": round(refs[role] + off.get(role, 0.0), 3),
             "GolSq": round(ctx["lam_for"], 2), "GolOpp": round(ctx["lam_conc"], 2), "Fonte": ctx["src"],
+            "Res": round(pj["res"], 3), "P_V": round(100 * ctx["pv"]), "P_N": round(100 * ctx["pn"]), "P_S": round(100 * ctx["ps"]),
+            "KO": raw_dt.replace(" ", "T") + "Z",
             "Nota": nota,
         })
     if problems:
@@ -807,7 +825,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             odds_msg += f" - {odds_note}"
     if inj_msg.startswith("attivi"):
         inj_msg += f" - {n_inj} segnalazioni sulla tua rosa" if inj_msg != "attivi" else f" ({n_inj} segnalazioni sulla tua rosa)"
-    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg}
+    kicks = [{"t": m["datetime"].replace(" ", "T") + "Z", "m": f"{m['h']['title']}-{m['a']['title']}"} for m in fixtures]
+    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg, "kicks": kicks}
     if check_only:
         return None, None, problems, info
     return pd.DataFrame(rows), fixtures, problems, info
@@ -824,7 +843,7 @@ def save_predictions(df, info, fixtures, now, storico, force=False):
     d = Path(storico)
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"G{rno:02d}.csv"
-    df[["Giocatore", "Ruolo", "Squadra", "Avversario", "FV_raw", "Fantavoto", "Titolare%", "EV"]].to_csv(f, index=False)
+    df[["Giocatore", "Ruolo", "Squadra", "Avversario", "FV_raw", "Fantavoto", "Titolare%", "EV", "Disp", "Res"]].to_csv(f, index=False)
     return f
 
 
@@ -1009,8 +1028,8 @@ def evaluate_fc(prov, season, fc_dir, storico_dir, roster):
 
 # ============================================================== CALIBRAZIONE =
 def read_voti(path):
-    """voti_reali.csv: blocchi '# giornata: N' seguiti da righe 'giocatore,voto,fantavoto'.
-    '-' o 'sv' = senza voto (ignorato)."""
+    """voti_reali.csv: blocchi '# giornata: N' seguiti da righe 'giocatore,voto,fantavoto[,T|P]'.
+    '-' o 'sv' = senza voto. Quarta colonna facoltativa: T = schierato titolare, P = in panchina."""
     rows, g, bad = [], None, 0
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -1028,17 +1047,100 @@ def read_voti(path):
         try:
             fv = float(p[2].replace(",", "."))
         except ValueError:
-            continue
+            fv = float("nan")                          # senza voto: lo tengo per sapere se era titolare
         if not g:
             bad += 1
             continue
-        rows.append({"giornata": g, "Giocatore": p[0], "Reale": fv})
+        rows.append({"giornata": g, "Giocatore": p[0], "Reale": fv, "Sched": p[3].strip().upper() if len(p) > 3 else ""})
     if bad:
         print(f"  ! {bad} righe di {path} ignorate: manca il numero di giornata ('# giornata: N')")
-    return pd.DataFrame(rows, columns=["giornata", "Giocatore", "Reale"])
+    return pd.DataFrame(rows, columns=["giornata", "Giocatore", "Reale", "Sched"])
 
 
-def _calibra_votes(storico_dir, voti_path, out_json):
+def _team_points(xi, bench, fv, role):
+    """Somma dei fantavoti dei titolari; chi non ha voto viene sostituito (max 3) dal primo panchinaro dello stesso ruolo con voto."""
+    tot, used, subs = 0.0, set(), 0
+    for n in xi:
+        if n in fv:
+            tot += fv[n]
+        elif subs < 3:
+            for b in bench:
+                if b not in used and role.get(b) == role.get(n) and b in fv:
+                    tot += fv[b]
+                    used.add(b)
+                    subs += 1
+                    break
+    return tot
+
+
+def pagella(pred, real):
+    """Per ogni giornata: punti della formazione consigliata dal modello, di quella che hai schierato e del massimo possibile."""
+    rounds = []
+    for g, pg in pred.groupby("giornata"):
+        rg = real[real.giornata == g]
+        fv = {r.Giocatore: r.Reale for r in rg.itertuples() if pd.notna(r.Reale)}
+        if not fv:
+            continue
+        role = dict(zip(pg.Giocatore, pg.Ruolo))
+        dfm = pg.copy().reset_index(drop=True)
+        dfm["Disp"] = dfm["Disp"].fillna(True).astype(bool) if "Disp" in dfm.columns else True
+        item = {"giornata": int(g)}
+        ln = best_lineup(dfm, MODULES)
+        if ln:
+            mod, _, xi, bench = ln
+            item["modello"] = {"modulo": mod, "punti": round(_team_points(list(xi.Giocatore), list(bench.Giocatore), fv, role), 1)}
+        t = [r.Giocatore for r in rg.itertuples() if r.Sched == "T" and r.Giocatore in role]
+        if len(t) == 11:
+            order = dfm.sort_values("EV", ascending=False).Giocatore.tolist()
+            cnt = {k: sum(1 for x in t if role[x] == k) for k in "PDCA"}
+            item["tua"] = {"modulo": f"{cnt['D']}-{cnt['C']}-{cnt['A']}",
+                           "punti": round(_team_points(t, [x for x in order if x not in t], fv, role), 1)}
+        best = None
+        for mod in MODULES:
+            d, c, a = map(int, mod.split("-"))
+            tot, ok = 0.0, True
+            for r, nn in (("P", 1), ("D", d), ("C", c), ("A", a)):
+                vals = sorted((v for x, v in fv.items() if role.get(x) == r), reverse=True)
+                if len(vals) < nn:
+                    ok = False
+                    break
+                tot += sum(vals[:nn])
+            if ok and (best is None or tot > best[1]):
+                best = (mod, tot)
+        if best:
+            item["massimo"] = {"modulo": best[0], "punti": round(best[1], 1)}
+        rounds.append(item)
+    if not rounds:
+        return None
+    media = {k: round(float(np.mean([x[k]["punti"] for x in rounds if k in x])), 1)
+             for k in ("modello", "massimo") if any(k in x for x in rounds)}
+    media["n"] = len(rounds)
+    common = [x for x in rounds if all(k in x for k in ("modello", "tua", "massimo"))]      # confronto alla pari: solo le giornate con la tua formazione
+    comune = {k: round(float(np.mean([x[k]["punti"] for x in common])), 1) for k in ("modello", "tua", "massimo")} if common else None
+    if comune:
+        comune["n"] = len(common)
+    return {"rounds": rounds, "media": media, "comune": comune}
+
+
+def _result_lookup(prov, season):
+    """(giornata, squadra della rosa) -> +1 vittoria, 0 pareggio, -1 sconfitta, dai risultati Understat."""
+    ms = prov.matches(season)
+    titles = sorted({m[s]["title"] for m in ms for s in ("h", "a")})
+    res = {}
+    for no, grp in split_rounds(ms):
+        if not no:
+            continue
+        for m in grp:
+            gl = m.get("goals") or {}
+            if not m.get("isResult") or gl.get("h") in (None, "") or gl.get("a") in (None, ""):
+                continue
+            gh, ga = int(float(gl["h"])), int(float(gl["a"]))
+            res[(no, m["h"]["title"])] = float(np.sign(gh - ga))
+            res[(no, m["a"]["title"])] = float(np.sign(ga - gh))
+    return lambda g, sq: res.get((int(g), resolve_team(sq, titles)))
+
+
+def _calibra_votes(storico_dir, voti_path, out_json, lookup=None):
     out = {"aggiornato": datetime.now().strftime("%Y-%m-%d %H:%M"), "offset": {r: 0.0 for r in "PDCA"}, "report": {"n": 0}}
     frames = []
     for f in sorted(Path(storico_dir).glob("G*.csv")):
@@ -1049,50 +1151,95 @@ def _calibra_votes(storico_dir, voti_path, out_json):
         print("Calibrazione: mancano previsioni salvate o voti reali, nessuna correzione applicata.")
         Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
         return out
-    pred, real = pd.concat(frames), read_voti(voti_path)
-    df = pred.merge(real, on=["giornata", "Giocatore"], how="inner")
-    if df.empty:
+    pred, real_all = pd.concat(frames), read_voti(voti_path)
+    minr = CFG["calib_min_round"]
+    out["pagella"] = pagella(pred[pred.giornata >= minr], real_all)          # le prime giornate (rodaggio) non entrano nel giudizio
+    real = real_all.dropna(subset=["Reale"])
+    df_all = pred.merge(real, on=["giornata", "Giocatore"], how="inner")
+    if df_all.empty:
         print("Calibrazione: nessun giocatore in comune fra previsioni e voti reali.")
         Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
         return out
-    df["err"] = df["FV_raw"] - df["Reale"]
-    rep = {"n": int(len(df)), "giornate": sorted(int(x) for x in df.giornata.unique()),
-           "mae_modello": float(df.err.abs().mean()), "bias": {}, "n_ruolo": {}}
-    # baseline 1: media reale del ruolo
-    rep["mae_media_ruolo"] = float((df.Reale - df.groupby("Ruolo").Reale.transform("mean")).abs().mean())
-    # baseline 2: media dei suoi altri fantavoti reali (leave-one-out), solo chi ha >= 2 osservazioni
-    g = df.groupby("Giocatore").Reale
-    cnt, tot = g.transform("count"), g.transform("sum")
-    sub = df[cnt >= 2].copy()
-    if len(sub):
-        loo = (tot[cnt >= 2] - sub.Reale) / (cnt[cnt >= 2] - 1)
-        rep["n_sub"] = int(len(sub))
-        rep["mae_modello_sub"] = float(sub.err.abs().mean())
-        rep["mae_media_giocatore"] = float((sub.Reale - loo).abs().mean())
-    cs = []
-    for role, gr in df.groupby("Ruolo"):
-        n = len(gr)
-        bias = float(gr.err.mean())
-        rep["bias"][role], rep["n_ruolo"][role] = round(bias, 3), int(n)
-        if n >= CFG["calib_min_obs"]:
-            out["offset"][role] = round(-bias * n / (n + CFG["calib_shrink"]), 3)
-        if n >= 5:
-            cs.append(gr["FV_raw"].rank().corr(gr["Reale"].rank()))
-    rep["spearman_ruolo"] = float(np.nanmean(cs)) if cs else None
+    # Rodaggio: nelle prime giornate il modello ha pochissime partite della stagione in corso (nuovi acquisti e neopromosse
+    # sconosciuti). I suoi errori li' sono di natura diversa da quelli di oggi: non li uso per correggere il modello
+    # ne' per giudicarlo. Le uso solo per l'effetto risultato (sotto), che non dipende da questo problema.
+    df = df_all[df_all.giornata >= minr].copy()
+    excl = sorted(int(x) for x in set(df_all.giornata) - set(df.giornata))
+    rep = {"n": int(len(df)), "escluse": excl, "giornate": sorted(int(x) for x in df.giornata.unique()) if len(df) else [],
+           "bias": {}, "n_ruolo": {}}
+    if len(df):
+        df["err"] = df["FV_raw"] - df["Reale"]
+        rep["mae_modello"] = float(df.err.abs().mean())
+        # baseline 1: media reale del ruolo
+        rep["mae_media_ruolo"] = float((df.Reale - df.groupby("Ruolo").Reale.transform("mean")).abs().mean())
+        # baseline 2: media dei suoi altri fantavoti reali (leave-one-out), solo chi ha >= 2 osservazioni
+        g = df.groupby("Giocatore").Reale
+        cnt, tot = g.transform("count"), g.transform("sum")
+        sub = df[cnt >= 2].copy()
+        if len(sub):
+            loo = (tot[cnt >= 2] - sub.Reale) / (cnt[cnt >= 2] - 1)
+            rep["n_sub"] = int(len(sub))
+            rep["mae_modello_sub"] = float(sub.err.abs().mean())
+            rep["mae_media_giocatore"] = float((sub.Reale - loo).abs().mean())
+        cs = []
+        for role, gr in df.groupby("Ruolo"):
+            n = len(gr)
+            bias = float(gr.err.mean())
+            rep["bias"][role], rep["n_ruolo"][role] = round(bias, 3), int(n)
+            if n >= CFG["calib_min_obs"]:
+                out["offset"][role] = round(-bias * n / (n + CFG["calib_shrink"]), 3)
+            if n >= 5:
+                cs.append(gr["FV_raw"].rank().corr(gr["Reale"].rank()))
+        rep["spearman_ruolo"] = float(np.nanmean(cs)) if cs else None
+    # effetto risultato: quanto il voto residuo (reale - previsto) dipende da vittoria/pareggio/sconfitta effettivi.
+    # Usa tutte le giornate, con gli scarti calcolati rispetto alla media del ruolo (quindi il rodaggio non lo distorce).
+    if lookup is not None and "Squadra" in df_all.columns:
+        d2 = df_all.copy()
+        d2["x"] = [lookup(g_, sq) for g_, sq in zip(d2.giornata, d2.Squadra)]
+        d2 = d2.dropna(subset=["x"])
+        if len(d2) >= 8:
+            d2["r"] = d2.Reale - d2.FV_raw
+            rdm = d2.r - d2.groupby("Ruolo").r.transform("mean")
+            xdm = d2.x - d2.groupby("Ruolo").x.transform("mean")
+            den = float((xdm ** 2).sum())
+            ols = float((xdm * rdm).sum() / den) if den > 0 else 0.0
+            n_ = len(d2)
+            beta = (n_ * ols + CFG["result_beta_shrink"] * CFG["result_beta_prior"]) / (n_ + CFG["result_beta_shrink"])
+            out["result_beta"] = round(beta, 3)
+            rep["result_beta_ols"], rep["result_n"] = round(ols, 3), int(n_)
+            print(f"  effetto risultato: dai dati {ols:+.2f} fantavoto per vittoria (vs sconfitta = doppio) su {n_} prestazioni; "
+                  f"uso {beta:.2f} (prudente, mescolato al valore di partenza {CFG['result_beta_prior']})")
     out["report"] = rep
     Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
-    print(f"Calibrazione su {rep['n']} prestazioni reali, giornate {rep['giornate']}")
-    print(f"  errore medio modello (MAE): {rep['mae_modello']:.2f}   media del ruolo: {rep['mae_media_ruolo']:.2f}")
-    if "mae_media_giocatore" in rep:
-        print(f"  (su {rep['n_sub']} righe con storico) modello {rep['mae_modello_sub']:.2f} "
-              f"vs media dei suoi fantavoti {rep['mae_media_giocatore']:.2f}")
-    print(f"  scarto medio per ruolo (previsto - reale): {rep['bias']}")
-    print(f"  correzione applicata: {out['offset']}   (prudente: si attenua con pochi dati)")
+    if excl:
+        print(f"  giornate {excl} in rodaggio: escluse dalla correzione e dal giudizio del modello (usate solo per l'effetto risultato)")
+    if len(df):
+        print(f"Calibrazione su {rep['n']} prestazioni reali, giornate {rep['giornate']}")
+        print(f"  errore medio modello (MAE): {rep['mae_modello']:.2f}   media del ruolo: {rep['mae_media_ruolo']:.2f}")
+        if "mae_media_giocatore" in rep:
+            print(f"  (su {rep['n_sub']} righe con storico) modello {rep['mae_modello_sub']:.2f} "
+                  f"vs media dei suoi fantavoti {rep['mae_media_giocatore']:.2f}")
+        print(f"  scarto medio per ruolo (previsto - reale): {rep['bias']}")
+        print(f"  correzione applicata: {out['offset']}   (prudente: si attenua con pochi dati)")
+    else:
+        print("Calibrazione: nessuna giornata oltre il rodaggio, nessuna correzione applicata.")
     return out
 
 
 def calibra(storico_dir, voti_path, out_json, fc_dir=None, prov=None, season=None, roster=None):
-    out = _calibra_votes(storico_dir, voti_path, out_json)
+    lookup = None
+    if prov is not None and season:
+        try:
+            lookup = _result_lookup(prov, season)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! risultati delle partite non disponibili, salto l'effetto risultato ({type(e).__name__})")
+    out = _calibra_votes(storico_dir, voti_path, out_json, lookup)
+    if out.get("pagella"):
+        pg = out["pagella"]
+        print("Pagella della formazione (somma dei fantavoti dei titolari):")
+        for r in pg["rounds"]:
+            print("  G%d: " % r["giornata"] + " | ".join(f"{k} {r[k]['punti']} ({r[k]['modulo']})" for k in ("modello", "tua", "massimo") if k in r))
+        print("  media su tutte le giornate:", pg["media"], "| dove c'e' anche la tua formazione:", pg.get("comune"))
     if fc_dir and prov is not None and Path(fc_dir).exists() and list(Path(fc_dir).glob("*.txt")):
         try:
             res = evaluate_fc(prov, season, fc_dir, storico_dir, roster)
@@ -1149,6 +1296,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
   <div class="bh"><b id="lt">Formazione</b>
     <select id="mod" aria-label="Modulo"></select><button id="pbtn">Incolla elenco</button><button id="copy">Copia</button></div>
   <div class="mini" id="mini"></div>
+  <div class="s" id="dl" style="margin-top:3px"></div>
 </div>
 <h2>Dettaglio formazione</h2>
 <div class="s" style="margin-bottom:6px">Tocca un titolare per mandarlo in panchina, o un panchinaro per farlo giocare: al suo posto entra il migliore disponibile. &#128274; = scelta tua, tocca di nuovo per tornare in automatico.</div>
@@ -1157,6 +1305,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <h2>Panchina (in ordine)</h2><div class="card" id="bench"></div>
 <div id="probs" class="card" style="display:none"></div>
 <div id="cal" class="card" style="display:none"></div>
+<div id="pag" class="card" style="display:none"></div>
 <h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
 <div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
 <details class="card" id="pdet"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
@@ -1166,6 +1315,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
   <button id="apply">Applica</button><button id="gh">Salva su GitHub</button></div><div class="info" id="pout"></div></details>
 <div id="roster"></div>
 <p class="s" id="ver"></p>
+<p class="s" id="beta"></p>
 <p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
 <script>
 const D = __DATA__;
@@ -1210,7 +1360,7 @@ function bestLineup(){
 function mk(tag, cls, txt){ const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 function line(s, where){
   const l = mk("div","ln tap"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",(s.force ? "\ud83d\udd12 " : "") + s.Giocatore));
-  l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%" + (s.force === -1 ? " \u00b7 tua scelta: panchina" : s.force === 1 ? " \u00b7 tua scelta: titolare" : "")));
+  l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%" + (s.KO && Date.parse(s.KO) <= Date.now() ? " \u00b7 partita iniziata" : "") + (s.force === -1 ? " \u00b7 tua scelta: panchina" : s.force === 1 ? " \u00b7 tua scelta: titolare" : "")));
   l.addEventListener("click", () => {
     if (s.force) s.force = 0; else s.force = (where === "xi") ? -1 : 1;              // titolare -> panchina, panchinaro -> titolare, tocca ancora = automatico
     save(); update(); });
@@ -1255,7 +1405,7 @@ function build(){
     r.appendChild(mk("div","info", s.Avversario + " (" + s.Data + ") \u00b7 gol " + s.P_gol + "% \u00b7 assist " + s.P_ass + "%" +
       (s["CS%"] != null ? " \u00b7 clean sheet " + s["CS%"] + "%" : "")));
     r.appendChild(mk("div","info2", "fantavoto " + s.Fantavoto.toFixed(2) + " \u00b7 squadra " + s.GolSq.toFixed(1) + " gol attesi, avversario " + s.GolOpp.toFixed(1) +
-      " (" + s.Fonte + ")" + (s.Nota ? " \u00b7 " + s.Nota : "")));
+      " (" + s.Fonte + ") \u00b7 risultato: V " + s.P_V + "% N " + s.P_N + "% P " + s.P_S + "%" + (s.Nota ? " \u00b7 " + s.Nota : "")));
     const c = mk("div","ctl"), sl = mk("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.step = 5; sl.value = s.p;
     sl.addEventListener("input", () => { s.p = +sl.value; save(); update(); });
     const pv = mk("span","pv"); const lb = mk("label","o"), cb = mk("input"); cb.type = "checkbox"; cb.checked = !s.disp;
@@ -1275,7 +1425,7 @@ if (D.calib && D.calib.n > 0) { const C = document.getElementById("cal"), c = D.
   C.appendChild(mk("div", "info", "Su " + c.n + " prestazioni reali (giornate " + c.giornate.join(", ") + ") l'errore medio sul fantavoto \u00e8 " + c.mae_modello.toFixed(2) +
     "; prevedere la media del ruolo darebbe " + c.mae_media_ruolo.toFixed(2) + "." + (c.mae_media_giocatore != null ?
     " Su chi ha storico: modello " + c.mae_modello_sub.toFixed(2) + " contro " + c.mae_media_giocatore.toFixed(2) + " usando la media dei suoi ultimi fantavoti." : "")));
-  C.appendChild(mk("div", "info", c.n < 60 ? "Campione ancora piccolo: prendi questi numeri come indicativi." : "")); }
+  C.appendChild(mk("div", "info", (c.escluse && c.escluse.length ? "Giornate " + c.escluse.join(", ") + " escluse dal giudizio (rodaggio: il modello aveva pochi dati della stagione). " : "") + (c.n < 60 ? "Campione ancora piccolo: prendi questi numeri come indicativi." : ""))); }
 if (D.fc) { const C = document.getElementById("cal"), f = D.fc; C.style.display = "block";
   C.appendChild(mk("b", null, "Fantacalcio.it: quanto ci si pu\u00f2 fidare"));
   C.appendChild(mk("div", "info", "Su " + f.n + " giocatori in " + f.matches + " partite" + (f.lead_h != null ? " (testo copiato in media " + f.lead_h.toFixed(1) + " ore prima)" : "") +
@@ -1284,6 +1434,30 @@ if (D.fc) { const C = document.getElementById("cal"), f = D.fc; C.style.display 
   if (f.roster) C.appendChild(mk("div", "info", "Sui tuoi giocatori (" + f.roster.n + "): Fantacalcio.it " + f.roster.brier_fc.toFixed(3) + " contro il mio modello " + f.roster.brier_model.toFixed(3) + " (pi\u00f9 basso = meglio)."));
   if (f.out_n) C.appendChild(mk("div", "info", "Tra gli infortunati/squalificati indicati, ne hanno giocato " + f.out_wrong + " su " + f.out_n + "."));
 }
+function fmtDur(ms){ const m = Math.max(0, Math.floor(ms / 60000)), h = Math.floor(m / 60), g = Math.floor(h / 24);
+  return g > 0 ? g + " g " + (h % 24) + " h" : h > 0 ? h + " h " + (m % 60) + " min" : m + " min"; }
+function tick(){
+  const el = document.getElementById("dl"), ks = (D.kicks || []).map(k => ({t: Date.parse(k.t), m: k.m})).sort((a, b) => a.t - b.t), now = Date.now();
+  if (!ks.length) { el.textContent = ""; return; }
+  const started = ks.filter(k => k.t <= now).length, next = ks.find(k => k.t > now);
+  const fmt = t => new Date(t).toLocaleString("it-IT", {weekday: "long", hour: "2-digit", minute: "2-digit"});
+  el.style.color = "";
+  if (!started) { const left = ks[0].t - now; el.textContent = "\u23f1 Scadenza (primo calcio d'inizio): " + fmt(ks[0].t) + ", " + ks[0].m + " \u00b7 mancano " + fmtDur(left) + " (dipende dalla tua lega)";
+    if (left < 2 * 3600000) el.style.color = "#d97706"; }
+  else if (next) { el.textContent = "\u23f1 " + started + " partite su " + ks.length + " gi\u00e0 iniziate \u00b7 prossima: " + next.m + " tra " + fmtDur(next.t - now); el.style.color = "#d97706"; }
+  else el.textContent = "\u23f1 Tutte le partite della giornata sono iniziate.";
+}
+if (D.pagella && D.pagella.rounds && D.pagella.rounds.length) { const P = document.getElementById("pag"), g = D.pagella; P.style.display = "block";
+  P.appendChild(mk("b", null, "Pagella della formazione"));
+  g.rounds.forEach(r => { const f = k => r[k] ? r[k].punti.toFixed(1) + " (" + r[k].modulo + ")" : "\u2013";
+    P.appendChild(mk("div", "info", "Giornata " + r.giornata + ": modello " + f("modello") + " \u00b7 tu " + f("tua") + " \u00b7 massimo possibile " + f("massimo"))); });
+  const m = g.media || {}, v = (o, k) => o && o[k] != null ? o[k].toFixed(1) : "\u2013";
+  P.appendChild(mk("div", "info", "Media su " + (m.n || g.rounds.length) + " giornate: modello " + v(m, "modello") + " \u00b7 massimo " + v(m, "massimo") + (m.modello != null && m.massimo ? ". Il modello coglie il " + Math.round(100 * m.modello / m.massimo) + "% del massimo." : "")));
+  if (g.comune) P.appendChild(mk("div", "info", "Solo le " + g.comune.n + " giornate con la tua formazione: modello " + v(g.comune, "modello") + " \u00b7 tu " + v(g.comune, "tua") + " \u00b7 massimo " + v(g.comune, "massimo") + "."));
+  P.appendChild(mk("div", "info", "Somma dei fantavoti dei titolari con le sostituzioni, senza modificatore difesa. \"Modello\" = sola previsione automatica, senza le tue correzioni di titolarit\u00e0."));
+}
+document.getElementById("beta").textContent = "Effetto risultato: la vittoria attesa della squadra sposta il fantavoto di circa " + (D.beta != null ? D.beta.toFixed(2) : "0.15") + " per ogni punto di (probabilit\u00e0 di vittoria - probabilit\u00e0 di sconfitta).";
+tick(); setInterval(() => { tick(); update(); }, 60000);
 document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg + " \u00b7 infortuni: " + D.inj_msg;
 document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; s.force = 0; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
@@ -1447,6 +1621,9 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
         "agg": f"{now:%d/%m/%Y %H:%M}",
         "calib": rep if rep and rep.get("n", 0) > 0 else None,
         "fc": (calib or {}).get("fc"),
+        "pagella": (calib or {}).get("pagella"),
+        "kicks": info.get("kicks", []),
+        "beta": (calib or {}).get("result_beta", CFG["result_beta_prior"]),
         "fcmap": (calib or {}).get("fc_map") or [],
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
@@ -1474,11 +1651,14 @@ def main(argv=None):
 
     if a.calibra:
         prov, season, roster = None, None, None
-        if Path(a.formazioni).exists() and list(Path(a.formazioni).glob("*.txt")):
+        try:
             n_ = datetime.now(ZoneInfo(CFG["tz"]))
             season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
             roster = pd.read_csv(a.rosa)
             prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
+        except Exception as e:  # noqa: BLE001
+            prov = None
+            print(f"  ! Understat non raggiungibile ({type(e).__name__}): calibrazione solo sui voti")
         calibra(a.storico, a.voti, a.calib, a.formazioni, prov, season, roster)
         return
 
