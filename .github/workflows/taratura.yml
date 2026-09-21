@@ -1,0 +1,25 @@
+# Metti questo file in .github/workflows/taratura.yml.
+# Da telefono: Actions > taratura > Run workflow. Ci mette qualche minuto (scarica lo storico di centinaia di giocatori).
+# Misura sui dati della Serie A quanto pesare le partite passate e se la "forma recente" serve davvero,
+# poi salva tuning.json nel repository: il modello lo usa da solo alla prossima esecuzione.
+# Si rilancia ogni tanto (per esempio una volta al mese), non serve tutti i giorni.
+name: taratura
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt
+      - run: python fanta_predictor.py --taratura
+      - run: |
+          git config user.name "fanta-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add tuning.json
+          git diff --cached --quiet || (git commit -m "taratura del modello" && git push)
