@@ -1,0 +1,26 @@
+Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
+Maignan,P,Milan,@ Torino,4.486,4.48,100,4.48,True,-0.029
+Falcone,P,Lecce,@ Venezia,4.206,4.16,100,4.16,True,-0.332
+Torriani,P,Milan,@ Torino,4.514,4.51,0,4.63,True,-0.029
+Mancini,D,Roma,vs Fiorentina,6.536,6.61,100,6.61,True,0.466
+Ramon,D,Como,@ Udinese,6.566,6.6,83,6.55,True,0.26
+Lucumì,D,Juventus,@ Frosinone,6.228,6.27,9,6.29,True,0.247
+Wesley,D,Roma,vs Fiorentina,6.454,6.52,64,6.44,True,0.466
+Miranda J.,D,Bologna,vs Lazio,6.34,6.36,93,6.35,True,0.107
+Diego Carlos,D,Parma,vs Cagliari,6.153,6.14,9,6.28,True,-0.121
+Badiashile,D,Napoli,@ Genoa,6.238,6.25,0,6.3,True,0.09
+Gabbia,D,Milan,@ Torino,6.27,6.27,100,6.27,True,-0.029
+Conceicao,C,Juventus,@ Frosinone,6.852,6.89,100,6.89,True,0.247
+Alajbegovic,C,Juventus,@ Frosinone,6.239,6.28,0,6.35,True,0.247
+Cristante,C,Roma,vs Fiorentina,6.323,6.39,100,6.39,True,0.466
+Lobotka,C,Napoli,@ Genoa,6.142,6.16,77,6.2,True,0.09
+Pulisic,C,Milan,@ Torino,6.535,6.53,45,6.43,True,-0.029
+Liberali,C,Como,@ Udinese,6.218,6.26,0,6.35,True,0.26
+Bernabè,C,Parma,vs Cagliari,6.332,6.31,33,6.34,True,-0.121
+Orsolini,C,Bologna,vs Lazio,6.655,6.67,51,6.52,False,0.107
+Laurientè,A,Sassuolo,@ Atalanta,6.689,6.64,100,6.64,True,-0.316
+Hojlund,A,Napoli,@ Genoa,7.026,7.04,100,7.04,True,0.09
+De Ketelaere,A,Atalanta,vs Sassuolo,6.758,6.81,78,6.86,True,0.316
+Maldini,A,Cagliari,@ Parma Calcio 1913,6.711,6.73,0,7.06,True,0.121
+Stulic,A,Lecce,@ Venezia,6.205,6.16,34,6.75,True,-0.332
+Yildiz,A,Juventus,@ Frosinone,6.685,6.72,61,6.85,False,0.247
