@@ -82,7 +82,7 @@ CFG = {
     "result_beta_prior": 0.15,
     "result_beta_shrink": 60,
     "tz": "Europe/Rome",
-    "version": "21/09 - pagella, scadenza, effetto risultato",
+    "version": "22/09 - forma recente e taratura",
     "cache_hours": 12,
 }
 
@@ -560,22 +560,53 @@ def resolve_team(name, titles):
     return m[0] if m else None
 
 
-def player_profile(pm, team, team_hist, role, priors, cards):
+DEFAULT_S2 = {"A": 0.22, "C": 0.12, "D": 0.06}     # [EURISTICA] varianza per 90' dell'xGI partita per partita, se manca la taratura
+
+
+def _trend(pm, role, tune):
+    """Forma: xGI per 90 delle ultime 5 presenze contro le 30 precedenti, con z-score (rumore stimato dalla taratura)."""
+    if role == "P" or len(pm) < 8:
+        return None
+    n = len(pm)
+    xg, xa, mn = pm.xG.to_numpy(float), pm.xA.to_numpy(float), pm.time.to_numpy(float)
+    r_i, b_i = slice(n - 5, n), slice(max(0, n - 35), n - 5)
+    nr, nb = mn[r_i].sum() / 90, mn[b_i].sum() / 90
+    if nr < 1.5 or nb < 3.0:
+        return None
+    r, b = (xg[r_i] + xa[r_i]).sum() / nr, (xg[b_i] + xa[b_i]).sum() / nb
+    s2 = ((tune or {}).get(role) or {}).get("sigma2_90") or DEFAULT_S2.get(role, 0.12)
+    z = (r - b) / math.sqrt(s2 / nr + s2 / nb)
+    arrow = "\u2191" if z >= 1.5 else "\u2197" if z >= 0.75 else "\u2193" if z <= -1.5 else "\u2198" if z <= -0.75 else "\u2192"
+    m_r, m_b = mn[-3:].mean(), mn[max(0, n - 18):n - 3].mean()
+    mnote = ("minuti in calo" if (m_r < 0.75 * m_b and m_b - m_r >= 15) else
+             "minuti in aumento" if (m_r > 1.25 * m_b and m_r - m_b >= 15) else "")
+    return {"r": float(r), "b": float(b), "z": float(z), "arrow": arrow, "mnote": mnote, "mr": float(m_r), "mb": float(m_b),
+            "r_xg": float(xg[r_i].sum() / nr), "r_xa": float(xa[r_i].sum() / nr)}
+
+
+def player_profile(pm, team, team_hist, role, priors, cards, tune=None):
     """Ritorna i tassi per 90' (ristretti verso la media di ruolo) e la disponibilita'."""
     pr = priors[role]
-    K = CFG["player_shrink_90s"]
-    out = {"n_matches": 0}
+    th = (tune or {}).get(role) or {}                     # parametri misurati dalla taratura (se presente)
+    hl = th.get("half_life", CFG["player_half_life"])
+    K = th.get("shrink", CFG["player_shrink_90s"])
+    out = {"n_matches": 0, "trend": None}
     pm = num(pd.DataFrame(pm), ["time", "xG", "xA", "xGBuildup"]) if len(pm) else pd.DataFrame()
     if len(pm):
         pm["date"] = pd.to_datetime(pm["date"])
         pm = pm[pm.time > 0].sort_values("date").tail(50).reset_index(drop=True)
     if len(pm):
-        w = decay(len(pm), CFG["player_half_life"])
+        w = decay(len(pm), hl)
         s90 = (w * pm.time / 90).sum()
         out["xg90"] = ((w * pm.xG).sum() + K * pr["xG"]) / (s90 + K)
         out["xa90"] = ((w * pm.xA).sum() + K * pr["xA"]) / (s90 + K)
         out["bu90"] = ((w * pm.xGBuildup).sum() + K * pr["xGBuildup"]) / (s90 + K)
         out["n_matches"] = len(pm)
+        out["trend"] = _trend(pm, role, tune)
+        tb, tr = th.get("trend_beta", 0.0), out["trend"]
+        if tb > 0 and tr:                                 # la forma recente pesa solo se la taratura ha dimostrato che serve
+            out["xg90"] = max(0.0, out["xg90"] + tb * (tr["r_xg"] - out["xg90"]))
+            out["xa90"] = max(0.0, out["xa90"] + tb * (tr["r_xa"] - out["xa90"]))
     else:
         out["xg90"], out["xa90"], out["bu90"] = pr["xG"], pr["xA"], pr["xGBuildup"]
     out["z_bu"] = float(np.clip((out["bu90"] - pr["bu_mean"]) / pr["bu_std"], -2, 2))
@@ -606,6 +637,151 @@ def player_profile(pm, team, team_hist, role, priors, cards):
                         exp_min = float((w[played] * m[played]).sum() / w[played].sum())
     out.update(p_start=p_start, p_sub=p_sub, exp_min=min(exp_min, 90.0))
     return out
+
+
+# ============================================================== TARATURA =====
+# Misura, su migliaia di partite di giocatori di Serie A, quanto pesare il passato (decadimento e ristringimento)
+# e se la "forma recente" aggiunge informazione oltre alla media pesata. Serve la rete: si lancia da GitHub Actions.
+TUNE_HL = [2, 3, 4, 6, 8, 10, 12, 16, 24, 36, 60, 1e9]   # mezza vita in partite (1e9 = nessun decadimento)
+TUNE_K = [0.5, 1, 2, 4, 6, 10, 16, 30]                # peso della media di ruolo, in "90 minuti"
+GROUP = {"F": "A", "M": "C", "D": "D"}                 # ruolo Understat -> ruolo fantacalcio
+_FEATS = ("xgi", "shots", "kp")
+
+
+def _series(pm, first_season):
+    df = pd.DataFrame(pm)
+    if df.empty:
+        return None
+    df = num(df, ["time", "xG", "xA", "shots", "key_passes"])
+    df["date"] = pd.to_datetime(df["date"])
+    seas = pd.to_numeric(df["season"], errors="coerce").fillna(0) if "season" in df.columns else 0
+    df = df[(df.time > 0) & (seas >= first_season)].sort_values("date")
+    if len(df) < 12:
+        return None
+    return (df.time.to_numpy(float), (df.xG + df.xA).to_numpy(float), df.shots.to_numpy(float), df.key_passes.to_numpy(float))
+
+
+def _mse_grid(series, prior, min_hist=8, min_min=20):
+    """Errore quadratico medio (pesato sui minuti) della stima 'xGI per 90' in funzione di (mezza vita, ristringimento)."""
+    out = {}
+    for h in TUNE_HL:
+        lam = 0.5 ** (1.0 / h)
+        for K in TUNE_K:
+            sq = wt = 0.0
+            for m, x, _s, _k in series:
+                S = W = 0.0
+                for t in range(len(m)):
+                    if t >= min_hist and m[t] >= min_min:
+                        e = x[t] * 90.0 / m[t] - (S + K * prior) / (W + K)
+                        w = m[t] / 90.0
+                        sq += w * e * e
+                        wt += w
+                    S = lam * S + x[t]
+                    W = lam * W + m[t] / 90.0
+            out[(h, K)] = sq / wt if wt else float("nan")
+    return out
+
+
+def _feature_tests(series, priors, h, K, min_hist=8, min_min=20):
+    """La differenza 'ultime 5 partite - media pesata' (di xGI, tiri, passaggi chiave) spiega la partita successiva
+    oltre alla media pesata? Coefficiente e z-score con errori standard raggruppati per giocatore."""
+    lam = 0.5 ** (1.0 / h)
+    acc = {f: [] for f in _FEATS}
+    s2_num, s2_cnt = 0.0, 0
+    for m, x, sh, kp in series:
+        vals = {"xgi": x, "shots": sh, "kp": kp}
+        S = {f: 0.0 for f in _FEATS}
+        W = 0.0
+        A, B = {f: 0.0 for f in _FEATS}, {f: 0.0 for f in _FEATS}
+        for t in range(len(m)):
+            n90 = m[t] / 90.0
+            if t >= max(min_hist, 5) and m[t] >= min_min:
+                lo = t - 5
+                n_r = m[lo:t].sum() / 90.0
+                if n_r >= 2.0:
+                    base = (S["xgi"] + K * priors["xgi"]) / (W + K)
+                    resid = x[t] / n90 - base
+                    for f in _FEATS:
+                        d = vals[f][lo:t].sum() / n_r - (S[f] + K * priors[f]) / (W + K)
+                        A[f] += n90 * d * resid
+                        B[f] += n90 * d * d
+                    s2_num += resid * resid * n90
+                    s2_cnt += 1
+            for f in _FEATS:
+                S[f] = lam * S[f] + vals[f][t]
+            W = lam * W + n90
+        for f in _FEATS:
+            acc[f].append((A[f], B[f]))
+    res = {}
+    for f in _FEATS:
+        ab = np.array(acc[f])
+        bs = ab[:, 1].sum()
+        if bs <= 0:
+            continue
+        c = ab[:, 0].sum() / bs
+        se = math.sqrt(((ab[:, 0] - c * ab[:, 1]) ** 2).sum()) / bs
+        res[f] = {"coef": float(c), "z": float(c / se) if se > 0 else 0.0}
+    return res, (s2_num / s2_cnt if s2_cnt else None), s2_cnt
+
+
+def run_tuning(prov, season, out_json, n_back=3):
+    seasons = list(range(season - n_back, season + 1))
+    ids = {}
+    for s in seasons:
+        try:
+            players = prov.players(s)
+        except Exception:  # noqa: BLE001
+            continue
+        for r in players:
+            grp = str(r.get("position", "")).split()[:1]
+            if grp and grp[0] in GROUP and float(r.get("time") or 0) >= 900:
+                ids[str(r["id"])] = grp[0]
+    print(f"Taratura: {len(ids)} giocatori di campo con almeno 900 minuti in una delle stagioni {seasons[0]}-{seasons[-1]}")
+    data = {g: [] for g in GROUP}
+    for i, (pid, g) in enumerate(ids.items()):
+        try:
+            ser = _series(prov.player_matches(pid), season - n_back)
+        except Exception:  # noqa: BLE001
+            continue
+        if ser:
+            data[g].append(ser)
+        if (i + 1) % 100 == 0:
+            print(f"  scaricati {i + 1}/{len(ids)}")
+    out = {"aggiornato": datetime.now().strftime("%Y-%m-%d %H:%M"), "stagioni": seasons, "roles": {}}
+    for g, series in data.items():
+        if len(series) < 20:
+            print(f"  ruolo {GROUP[g]}: pochi giocatori ({len(series)}), salto")
+            continue
+        tot_n = sum(m.sum() / 90.0 for m, *_ in series)
+        priors = {"xgi": sum(x.sum() for _m, x, *_ in series) / tot_n, "shots": sum(s.sum() for _m, _x, s, _k in series) / tot_n,
+                  "kp": sum(k.sum() for _m, _x, _s, k in series) / tot_n}
+        grid = _mse_grid(series, priors["xgi"])
+        bh, bK = min(grid, key=lambda k: grid[k])
+        ft, s2, n_obs = _feature_tests(series, priors, bh, bK)
+        c, z = ft.get("xgi", {}).get("coef", 0.0), ft.get("xgi", {}).get("z", 0.0)
+        beta = round(min(c, 0.5), 3) if (c > 0 and z >= 2) else 0.0
+        role = GROUP[g]
+        out["roles"][role] = {
+            "half_life": float(bh), "shrink": float(bK), "trend_beta": beta, "sigma2_90": round(s2, 4) if s2 else None,
+            "mse_best": round(grid[(bh, bK)], 5), "mse_default": round(grid[(10, 6)], 5),
+            "miglioramento_pct": round(100 * (grid[(10, 6)] - grid[(bh, bK)]) / grid[(10, 6)], 2),
+            "mse_per_mezza_vita": {str(h): round(min(grid[(h, k)] for k in TUNE_K), 5) for h in TUNE_HL},
+            "forma_recente": {f: {k: round(v, 3) for k, v in d.items()} for f, d in ft.items()},
+            "n_giocatori": len(series), "n_osservazioni": int(n_obs)}
+        print(f"  ruolo {role}: mezza vita {bh:g} partite, ristringimento {bK:g} (errore {grid[(bh, bK)]:.4f} contro "
+              f"{grid[(10, 6)]:.4f} con i valori attuali, {out['roles'][role]['miglioramento_pct']:+.1f}%)")
+        print(f"     forma recente (ultime 5 - media pesata): xGI coefficiente {c:+.2f} (z={z:+.1f}) -> "
+              f"{'uso ' + str(beta) if beta else 'nessun peso aggiuntivo'}; tiri z={ft.get('shots', {}).get('z', 0):+.1f}, "
+              f"passaggi chiave z={ft.get('kp', {}).get('z', 0):+.1f}")
+    Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+    return out
+
+
+def _trend_text(t):
+    if not t:
+        return ""
+    txt = f"forma {t['arrow']}: xGI/90 {t['r']:.2f} (ultime 5) vs {t['b']:.2f} (30 prima), z {t['z']:+.1f}"
+    return txt + (f", {t['mnote']}" if t["mnote"] else "")
 
 
 def fv_ref(role, pr, lg):
@@ -671,7 +847,7 @@ def best_lineup(df, modules=None):
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
         odds_events=None, calib=None, odds_note=None, inj_key=None,
-        inj_site="api-football.com"):
+        inj_site="api-football.com", tune=None):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
     matches_all = prov.matches(season)
@@ -773,7 +949,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             if backtest:
                 pm = [x for x in pm if str(x["date"])[:10] < cutoff.strftime("%Y-%m-%d")]
             prof = player_profile(pm, team, hist, role, priors, cards_all.loc[hit.id].to_dict()
-                                  if hit.id in cards_all.index else None)
+                                  if hit.id in cards_all.index else None, tune)
             nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
                     "pochi dati" if prof["n_matches"] < 5 else "")
         if inj_list:
@@ -807,6 +983,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             "GolSq": round(ctx["lam_for"], 2), "GolOpp": round(ctx["lam_conc"], 2), "Fonte": ctx["src"],
             "Res": round(pj["res"], 3), "P_V": round(100 * ctx["pv"]), "P_N": round(100 * ctx["pn"]), "P_S": round(100 * ctx["ps"]),
             "KO": raw_dt.replace(" ", "T") + "Z",
+            "Trend": (prof.get("trend") or {}).get("arrow", ""),
+            "TrendTxt": _trend_text(prof.get("trend")),
             "Nota": nota,
         })
     if problems:
@@ -1359,7 +1537,7 @@ function bestLineup(){
 }
 function mk(tag, cls, txt){ const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 function line(s, where){
-  const l = mk("div","ln tap"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",(s.force ? "\ud83d\udd12 " : "") + s.Giocatore));
+  const l = mk("div","ln tap"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",(s.force ? "\ud83d\udd12 " : "") + s.Giocatore + (s.Trend ? " " + s.Trend : "")));
   l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%" + (s.KO && Date.parse(s.KO) <= Date.now() ? " \u00b7 partita iniziata" : "") + (s.force === -1 ? " \u00b7 tua scelta: panchina" : s.force === 1 ? " \u00b7 tua scelta: titolare" : "")));
   l.addEventListener("click", () => {
     if (s.force) s.force = 0; else s.force = (where === "xi") ? -1 : 1;              // titolare -> panchina, panchinaro -> titolare, tocca ancora = automatico
@@ -1400,10 +1578,10 @@ function copyText(t, btn){
 function build(){
   const R = document.getElementById("roster"); R.textContent = "";
   D.order.forEach(i => { const s = S[i], r = mk("div","row"); r.dataset.i = i;
-    const t = mk("div","top"), left = mk("div"); left.appendChild(mk("span","r",s.Ruolo)); left.appendChild(mk("span","nm",s.Giocatore));
+    const t = mk("div","top"), left = mk("div"); left.appendChild(mk("span","r",s.Ruolo)); left.appendChild(mk("span","nm",s.Giocatore + (s.Trend ? " " + s.Trend : "")));
     const bd = mk("div","badge",s.Voto.toFixed(1)); bd.style.background = col(s.Voto); t.appendChild(left); t.appendChild(bd); r.appendChild(t);
     r.appendChild(mk("div","info", s.Avversario + " (" + s.Data + ") \u00b7 gol " + s.P_gol + "% \u00b7 assist " + s.P_ass + "%" +
-      (s["CS%"] != null ? " \u00b7 clean sheet " + s["CS%"] + "%" : "")));
+      (s["CS%"] != null ? " \u00b7 clean sheet " + s["CS%"] + "%" : "") + (s.TrendTxt ? " \u00b7 " + s.TrendTxt : "")));
     r.appendChild(mk("div","info2", "fantavoto " + s.Fantavoto.toFixed(2) + " \u00b7 squadra " + s.GolSq.toFixed(1) + " gol attesi, avversario " + s.GolOpp.toFixed(1) +
       " (" + s.Fonte + ") \u00b7 risultato: V " + s.P_V + "% N " + s.P_N + "% P " + s.P_S + "%" + (s.Nota ? " \u00b7 " + s.Nota : "")));
     const c = mk("div","ctl"), sl = mk("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.step = 5; sl.value = s.p;
@@ -1637,6 +1815,8 @@ def main(argv=None):
     ap.add_argument("--storico", default="storico", help="cartella delle previsioni salvate per la calibrazione")
     ap.add_argument("--voti", default="voti_reali.csv", help="file con i tuoi voti reali")
     ap.add_argument("--calib", default="calibrazione.json")
+    ap.add_argument("--tuning", default="tuning.json", help="parametri misurati dalla taratura")
+    ap.add_argument("--taratura", action="store_true", help="misura sui dati di tutta la Serie A quanto pesare il passato ed esci")
     ap.add_argument("--formazioni", default="formazioni", help="cartella con i testi copiati da Fantacalcio.it")
     ap.add_argument("--season", type=int, help="anno di inizio stagione (default: automatico)")
     ap.add_argument("--moduli", default=",".join(MODULES), help="moduli ammessi dalla tua lega, es. 4-3-3,3-5-2")
@@ -1649,6 +1829,12 @@ def main(argv=None):
     ap.add_argument("--no-odds", action="store_true", help="non usare le quote dei bookmaker")
     a = ap.parse_args(argv)
 
+    if a.taratura:
+        n_ = datetime.now(ZoneInfo(CFG["tz"]))
+        season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
+        run_tuning(UnderstatProvider(hours=24 * 30, refresh=a.refresh), season, a.tuning)
+        print(f"Parametri salvati in {a.tuning}")
+        return
     if a.calibra:
         prov, season, roster = None, None, None
         try:
@@ -1674,12 +1860,18 @@ def main(argv=None):
         except Exception:  # noqa: BLE001
             calib = None
 
+    tune = None
+    if Path(a.tuning).exists():
+        try:
+            tune = json.loads(Path(a.tuning).read_text(encoding="utf-8")).get("roles")
+        except Exception:  # noqa: BLE001
+            tune = None
     if a.backtest:
         rounds = [int(x) for x in a.giornata.split(",") if x.strip()]
         if not rounds:
             sys.exit("Con --backtest indica le giornate: --giornata 2,3")
         for g in rounds:
-            df, fixtures, problems, info = run(prov, roster, season, now, round_no=g, backtest=True, calib=None)
+            df, fixtures, problems, info = run(prov, roster, season, now, round_no=g, backtest=True, calib=None, tune=tune)
             f = save_predictions(df, info, fixtures, now, a.storico, force=True)
             print(f"-> previsioni della giornata {g} salvate in {f}\n")
         return
@@ -1709,7 +1901,7 @@ def main(argv=None):
     if inj_key:
         print(f"API_FOOTBALL_KEY trovata ({len(inj_key)} caratteri), servizio: {inj_site}")
     df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
-                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site)
+                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site, tune=tune)
     if a.check or df is None:
         return
     Path(a.storico).mkdir(parents=True, exist_ok=True)
