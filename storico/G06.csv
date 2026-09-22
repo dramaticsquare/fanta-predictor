@@ -1,26 +1,26 @@
 Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
 Maignan,P,Milan,@ Sassuolo,4.835,4.99,100,4.99,True,0.174
-Falcone,P,Lecce,vs Bologna,4.529,4.54,100,4.54,True,-0.207
+Falcone,P,Lecce,vs Bologna,4.516,4.53,100,4.53,True,-0.212
 Torriani,P,Milan,@ Sassuolo,4.863,5.02,0,4.69,True,0.174
 Mancini,D,Roma,@ Como,6.312,6.27,100,6.27,True,-0.019
 Ramon,D,Como,vs Roma,6.546,6.51,100,6.51,True,0.019
-Lucumì,D,Juventus,@ Cagliari,6.274,6.39,67,6.35,True,0.42
+Lucumì,D,Juventus,@ Cagliari,6.274,6.39,67,6.35,True,0.424
 Wesley,D,Roma,@ Como,6.329,6.28,70,6.28,True,-0.019
-Miranda J.,D,Bologna,@ Lecce,6.431,6.47,76,6.42,True,0.207
-Diego Carlos,D,Parma,@ Inter,6.109,5.79,56,5.99,True,-0.755
-Badiashile,D,Napoli,vs Frosinone,6.262,6.39,10,6.27,True,0.444
+Miranda J.,D,Bologna,@ Lecce,6.433,6.47,76,6.42,True,0.212
+Diego Carlos,D,Parma,@ Inter,6.109,5.79,56,5.99,True,-0.753
+Badiashile,D,Napoli,vs Frosinone,6.261,6.39,10,6.27,True,0.44
 Gabbia,D,Milan,@ Sassuolo,6.242,6.27,19,6.26,True,0.174
-Conceicao,C,Juventus,@ Cagliari,6.91,7.36,100,7.36,True,0.42
-Alajbegovic,C,Juventus,@ Cagliari,6.196,6.65,69,6.65,True,0.42
+Conceicao,C,Juventus,@ Cagliari,6.916,7.37,100,7.37,True,0.424
+Alajbegovic,C,Juventus,@ Cagliari,6.197,6.65,69,6.65,True,0.424
 Cristante,C,Roma,@ Como,6.263,6.56,100,6.56,True,-0.019
-Lobotka,C,Napoli,vs Frosinone,6.248,6.71,95,6.71,True,0.444
+Lobotka,C,Napoli,vs Frosinone,6.247,6.71,95,6.71,True,0.44
 Pulisic,C,Milan,@ Sassuolo,6.976,7.34,40,6.93,True,0.174
 Liberali,C,Como,vs Roma,6.037,6.34,12,6.62,True,0.019
-Bernabè,C,Parma,@ Inter,6.12,6.14,33,6.48,True,-0.755
-Orsolini,C,Bologna,@ Lecce,6.385,6.76,27,6.68,False,0.207
+Bernabè,C,Parma,@ Inter,6.12,6.14,33,6.48,True,-0.753
+Orsolini,C,Bologna,@ Lecce,6.388,6.77,27,6.68,False,0.212
 Laurientè,A,Sassuolo,vs AC Milan,6.691,6.8,100,6.8,True,-0.174
-Hojlund,A,Napoli,vs Frosinone,7.406,7.74,83,7.66,True,0.444
+Hojlund,A,Napoli,vs Frosinone,7.398,7.74,83,7.65,True,0.44
 De Ketelaere,A,Atalanta,vs Venezia,7.101,7.38,80,7.35,True,0.294
-Maldini,A,Cagliari,vs Juventus,6.626,6.64,91,6.7,True,-0.42
-Stulic,A,Lecce,vs Bologna,6.551,6.65,63,6.86,True,-0.207
-Yildiz,A,Juventus,@ Cagliari,6.801,7.13,11,7.22,False,0.42
+Maldini,A,Cagliari,vs Juventus,6.626,6.64,91,6.69,True,-0.424
+Stulic,A,Lecce,vs Bologna,6.551,6.65,63,6.86,True,-0.212
+Yildiz,A,Juventus,@ Cagliari,6.806,7.14,11,7.22,False,0.424
