@@ -77,7 +77,9 @@ CFG = {
     "calib_min_round": 3,        # le giornate precedenti (rodaggio: pochi dati della stagione) non entrano nella correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
     "fc_shrink": 20,             # idem per la correzione delle percentuali di Fantacalcio.it
-    "mercato_min_minutes": 450,   # minuti minimi in stagione per entrare nell'analisi di mercato
+    "mercato_min_minutes": 450,   # tetto massimo di minuti richiesti (si applica da meta' stagione in poi)
+    "mercato_min_frac": 0.55,     # ...prima, la soglia e' questa frazione dei minuti disponibili fino ad oggi
+    "mercato_search_min": 45,     # minuti minimi per comparire nella ricerca (piu' basso: solo per escludere chi non ha mai giocato)
     "mercato_luck_soglia": 0.30,  # scarto minimo (in fantavoto/90) tra reale e atteso per segnalare un giocatore
     # effetto risultato: chi vince prende voti un po' piu' alti. beta = fantavoto per unita' di (P(vittoria) - P(sconfitta)).
     # Parte da un valore prudente [EURISTICA] e viene stimato sui tuoi voti reali (con shrink verso questo valore)
@@ -280,6 +282,12 @@ def split_rounds(matches):
         else:
             out.append((0, g))
     return out
+
+
+def season_progress(matches):
+    """Ultima giornata con almeno una partita gia' giocata, per sapere quanti minuti un giocatore puo' avere accumulato."""
+    played = [no for no, g in split_rounds(matches) if no and any(m.get("isResult") for m in g)]
+    return max(played) if played else 0
 
 
 def current_round(matches, now):
@@ -1551,12 +1559,13 @@ def market_report(pcur, priors, roster, titles, S=None, outlook=None, fc_stats=N
     if "goals" not in pcur.columns or "assists" not in pcur.columns:
         return None, "Understat non fornisce i gol/assist reali in questo formato: analisi di mercato non disponibile."
     min_minutes = min_minutes or CFG["mercato_min_minutes"]
+    search_min = min(CFG["mercato_search_min"], min_minutes)     # per la ricerca includo anche chi ha giocato poco
     has_np = "npg" in pcur.columns and "npxG" in pcur.columns   # gol/xG al netto dei rigori, se Understat li fornisce
     cols = ["goals", "assists"] + (["npg", "npxG"] if has_np else [])
     df = num(pcur.copy(), cols)
     df["role"] = df["position"].astype(str).str.split().str[0].map(MKT_GROUP)
     df = df.dropna(subset=["role"])
-    df = df[df.time >= min_minutes].reset_index(drop=True)
+    df = df[df.time >= search_min].reset_index(drop=True)
     if df.empty:
         return None, "Nessun giocatore con abbastanza minuti ancora in questa stagione."
     if has_np:
@@ -1597,12 +1606,32 @@ def market_report(pcur, priors, roster, titles, S=None, outlook=None, fc_stats=N
                      "Fortuna": round(reale - atteso, 3), "Tua": str(r.id) in mine, "Rigorista": rigorista, "FonteNP": fonte,
                      "MvReale": round(fc["Mv"], 2) if fc and fc["Mv"] else None, "FmReale": round(fc["Fm"], 2) if fc and fc["Fm"] else None,
                      "AttaccoSquadra": o.get("attacco_label", "n/d"),
-                     "Calendario": o.get("cal_def" if r.role == "D" else "cal_att", "n/d")})
+                     "Calendario": o.get("cal_def" if r.role == "D" else "cal_att", "n/d"),
+                     "Affidabile": r.time >= min_minutes})
     rep = pd.DataFrame(rows)
+    rep["_med"] = rep.groupby("Ruolo")["Atteso90"].transform("median")
+
+    def _verdetto(r):
+        bits = []
+        if not r.Affidabile:
+            bits.append("Pochi minuti finora: giudizio ancora incerto.")
+        if r.Rigorista:
+            bits.append("Rigorista designato.")
+        if r.Fortuna <= -CFG["mercato_luck_soglia"]:
+            bits.append("Sfortunato: le sue occasioni valgono pi\u00f9 dei suoi gol/assist reali, probabile miglioramento." +
+                        (" Se \u00e8 tuo, non cederlo ora." if r.Tua else " Possibile obiettivo di mercato."))
+        elif r.Fortuna >= CFG["mercato_luck_soglia"] and r.Atteso90 <= r._med:
+            bits.append("Sta rendendo sopra le sue occasioni: rischio di calo." +
+                        (" Se \u00e8 tuo, valuta di cederlo adesso." if r.Tua else " Occhio se te lo offrono in cambio."))
+        else:
+            bits.append("Rendimento in linea con le sue occasioni.")
+        return " ".join(bits)
+
+    rep["Verdetto"] = rep.apply(_verdetto, axis=1)
     out = {}
-    for role, g in rep.groupby("Ruolo"):
-        g = g.sort_values("Atteso90", ascending=False)
-        med = g["Atteso90"].median()
+    for role, g_all in rep.groupby("Ruolo"):
+        g = g_all[g_all.Affidabile].sort_values("Atteso90", ascending=False)
+        med = g["Atteso90"].median() if len(g) else 0.0
         obiettivi = g[(~g.Tua) & (g.Fortuna <= -CFG["mercato_luck_soglia"])].sort_values("Fortuna").head(8)
         sfortunati_tuoi = g[g.Tua & (g.Fortuna <= -CFG["mercato_luck_soglia"] / 2)].sort_values("Fortuna")
         fortunati_tuoi = g[g.Tua & (g.Fortuna >= CFG["mercato_luck_soglia"] / 2) & (g.Atteso90 <= med)].sort_values("Fortuna", ascending=False)
@@ -1612,21 +1641,31 @@ def market_report(pcur, priors, roster, titles, S=None, outlook=None, fc_stats=N
                      "n": len(g), "mediana_atteso": round(float(med), 3)}
     out["_penalty_note"] = has_np
     out["_fc_n"] = n_fc_np
+    out["_all"] = rep.drop(columns=["_med"]).sort_values("Giocatore").to_dict("records")
     return out, None
 
 
 def to_html_mercato(report, err, season, now):
     ROLE_NAME = {"D": "Difensori", "C": "Centrocampisti", "A": "Attaccanti"}
     css = ("body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:0 12px 24px;background:#fff;color:#111;max-width:760px;margin:auto}"
-           "@media(prefers-color-scheme:dark){body{background:#111318;color:#eee}}"
+           "@media(prefers-color-scheme:dark){body{background:#111318;color:#eee}input,select{background:#1c1f27;color:#eee;border-color:#fff3}}"
            "h1{font-size:20px;margin:14px 0 2px}h2{font-size:16px;margin:22px 0 6px}h3{font-size:14px;margin:14px 0 4px;opacity:.85}"
            ".s{opacity:.6;font-size:12px}table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:6px;display:block;overflow-x:auto}"
            "th,td{padding:5px 7px;border-bottom:1px solid #8884;text-align:left;white-space:nowrap}"
-           ".pos{color:#16a34a;font-weight:600}.neg{color:#dc2626;font-weight:600}.tua{background:#2563eb22}")
+           ".pos{color:#16a34a;font-weight:600}.neg{color:#dc2626;font-weight:600}.tua{background:#2563eb22}"
+           "#search{width:100%;font-size:15px;padding:9px 10px;border-radius:8px;border:1px solid #8886;box-sizing:border-box}"
+           "#card{background:#8881 22;border-radius:10px;padding:10px 12px;margin-top:8px}"
+           "#card{background:#2563eb14;border-radius:10px;padding:10px 12px;margin-top:8px;display:none}"
+           "#card b{font-size:15px}.badge{display:inline-block;border-radius:8px;padding:2px 8px;font-size:12px;margin-left:6px;color:#fff}"
+           ".row2{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin:6px 0}.row2 div{min-width:90px}"
+           "#matches{font-size:13px;margin-top:4px}#matches div{padding:3px 0;cursor:pointer;color:#2563eb}")
     body = (f"<h1>Mercato</h1><p class=s>Stagione {season}/{str(season + 1)[-2:]} \u00b7 aggiornato {now:%d/%m/%Y %H:%M} \u00b7 "
             "confronta occasioni (xG/xA, senza rigori) e gol/assist reali di tutta la Serie A, con la forza offensiva della "
             "squadra e il calendario delle prossime 5 partite. Non conosco le rose degli altri della tua lega: controlla tu "
-            "chi \u00e8 davvero libero prima di fare un\u2019offerta.</p>")
+            "chi \u00e8 davvero libero prima di fare un\u2019offerta.</p>"
+            "<h2>Cerca un giocatore</h2>"
+            "<input id=search list=plist autocomplete=off placeholder=\"Scrivi un nome, es. Hojlund...\">"
+            "<datalist id=plist></datalist><div id=matches></div><div id=card></div>")
     if err:
         body += f"<p>{html.escape(err)}</p>"
     else:
@@ -1678,9 +1717,34 @@ def to_html_mercato(report, err, season, now):
                  'prossime 5 partite (per i difensori conta la fase difensiva, per gli altri quella offensiva). '
                  'Righe evidenziate = giocatori della tua rosa. I rigoristi attuali non sono identificati: la colonna "Rigori" '
                  'mostra solo quanti ne ha gi\u00e0 segnati in stagione.</p>')
+    js = ""
+    if not err:
+        payload = json.dumps(report.get("_all", []), ensure_ascii=False).replace("</", "<\\/")
+        js = ("<script>const ALL=" + payload + ";"
+              "const dl=document.getElementById('plist');ALL.forEach(p=>{const o=document.createElement('option');o.value=p.Giocatore;dl.appendChild(o);});"
+              "const colf=v=>v>0?'#16a34a':v<0?'#dc2626':'#6b7280';"
+              "function showCard(p){const c=document.getElementById('card');c.style.display='block';"
+              "const rig=p.Rigorista?' <span class=badge style=\"background:#f59e0b\">rigorista</span>':'';"
+              "const voti=(p.MvReale!=null)?(' \u00b7 voto medio reale '+p.MvReale+' \u00b7 fantamedia '+p.FmReale):'';"
+              "c.innerHTML='<b>'+p.Giocatore+rig+'</b><div class=s>'+p.Squadra+' ('+p.Ruolo+') \u00b7 '+p.Minuti+' minuti'+voti+'</div>"
+              "<div class=row2><div>Gol: <b>'+p.Gol+'</b></div><div>xG: <b>'+p.xG+'</b></div><div>Assist: <b>'+p.Assist+'</b></div>"
+              "<div>xA: <b>'+p.xA+'</b></div><div>Rigori segnati: <b>'+p.Rigori+'</b></div></div>"
+              "<div class=row2><div>Attacco squadra: <b>'+p.AttaccoSquadra+'</b></div><div>Calendario: <b>'+p.Calendario+'</b></div>"
+              "<div>Fortuna: <b style=\"color:'+colf(p.Fortuna)+'\">'+(p.Fortuna>0?'+':'')+p.Fortuna.toFixed(2)+'</b></div></div>"
+              "<div style=\"margin-top:6px\">'+p.Verdetto+'</div>';}"
+              "function search(){const q=document.getElementById('search').value.trim().toLowerCase();const M=document.getElementById('matches');"
+              "M.innerHTML='';document.getElementById('card').style.display='none';if(!q)return;"
+              "const norm=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\u00f8/gi,'o').replace(/\u00e6/gi,'ae').replace(/\u0142/gi,'l').replace(/\u0111/gi,'d').replace(/\u00df/g,'ss').toLowerCase();const nq=norm(q);"
+              "const hits=ALL.filter(p=>norm(p.Giocatore).includes(nq));"
+              "if(hits.length===1){showCard(hits[0]);return;}"
+              "hits.slice(0,8).forEach(p=>{const d=document.createElement('div');d.textContent=p.Giocatore+' \u2013 '+p.Squadra+' ('+p.Ruolo+')';"
+              "d.onclick=()=>{document.getElementById('search').value=p.Giocatore;showCard(p);M.innerHTML='';};M.appendChild(d);});"
+              "if(!hits.length)M.innerHTML='<div class=s>Nessun giocatore trovato (prova con solo il cognome).</div>';}"
+              "document.getElementById('search').addEventListener('input',search);"
+              "document.getElementById('search').addEventListener('change',search);</script>")
     return (f"<!doctype html><html lang=it><head><meta charset=utf-8>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'><title>Mercato</title>"
-            f"<style>{css}</style></head><body>{body}</body></html>")
+            f"<style>{css}</style></head><body>{body}{js}</body></html>")
 
 
 # ============================================================== OUTPUT ======
@@ -2087,6 +2151,9 @@ def main(argv=None):
         S, lg, hf, af = team_strengths(hist)
         titles = list(hist.keys())
         outlook = team_outlook(prov.matches(season), S, lg, hf, af, n_.replace(tzinfo=None))
+        rounds_played = max(season_progress(prov.matches(season)), 1)
+        min_minutes = min(CFG["mercato_min_minutes"], round(rounds_played * 90 * CFG["mercato_min_frac"]))
+        print(f"Mercato: {rounds_played} giornate giocate finora, minuti minimi richiesti {min_minutes}")
         fc_raw, fc_name = latest_fc_stats(a.statistiche)
         fc_stats = match_fc_stats(fc_raw, pcur, titles) if fc_raw is not None else None
         if fc_stats is not None:
@@ -2095,7 +2162,7 @@ def main(argv=None):
             print(f"Statistiche Fantacalcio.it: {fc_name} trovato ma non leggibile, uso solo Understat")
         else:
             print("Statistiche Fantacalcio.it: nessun file in statistiche/, uso solo Understat (rigoristi non identificati)")
-        report, err = market_report(pcur, priors, roster, titles, S, outlook, fc_stats)
+        report, err = market_report(pcur, priors, roster, titles, S, outlook, fc_stats, min_minutes)
         if err:
             print(err)
         out = Path(a.out)
