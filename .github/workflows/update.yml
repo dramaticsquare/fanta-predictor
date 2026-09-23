@@ -3,7 +3,10 @@
 # (GitHub Pages su "main /docs") e salva le previsioni pre-partita in storico/.
 # Facoltativi (Settings > Secrets and variables > Actions > Repository secrets):
 #   ODDS_API_KEY      = quote bookmaker (the-odds-api.com)
-#   API_FOOTBALL_KEY  = infortuni e squalificati (api-football.com)
+#   API_FOOTBALL_KEY  = infortuni: chiave di apifootball.com OPPURE di api-football.com (sono due siti diversi!)
+# Sotto, API_FOOTBALL_SITE dice a quale dei due appartiene la chiave.
+# Mercato: per i rigoristi e il voto reale, carica ogni tanto il file statistiche di Fantacalcio.it nella
+# cartella statistiche/ del repository (sostituisce il precedente); lo trova da solo al prossimo run.
 name: aggiorna-previsioni
 on:
   schedule: [{cron: "0 7 * * *"}]
@@ -16,6 +19,7 @@ jobs:
     env:
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      API_FOOTBALL_SITE: apifootball.com   # metti api-football.com se la chiave e' di API-Sports
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,6 +31,7 @@ jobs:
           if [ -n "$API_FOOTBALL_KEY" ]; then echo "API_FOOTBALL_KEY presente (${#API_FOOTBALL_KEY} caratteri)"; else echo "API_FOOTBALL_KEY assente"; fi
       - run: python fanta_predictor.py --calibra
       - run: python fanta_predictor.py --refresh
+      - run: python fanta_predictor.py --mercato
       - run: |
           git config user.name "fanta-bot"
           git config user.email "bot@users.noreply.github.com"
