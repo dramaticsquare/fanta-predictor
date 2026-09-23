@@ -77,6 +77,8 @@ CFG = {
     "calib_min_round": 3,        # le giornate precedenti (rodaggio: pochi dati della stagione) non entrano nella correzione
     "calib_shrink": 20,          # piu' alto = correzione piu' prudente
     "fc_shrink": 20,             # idem per la correzione delle percentuali di Fantacalcio.it
+    "mercato_min_minutes": 450,   # minuti minimi in stagione per entrare nell'analisi di mercato
+    "mercato_luck_soglia": 0.30,  # scarto minimo (in fantavoto/90) tra reale e atteso per segnalare un giocatore
     # effetto risultato: chi vince prende voti un po' piu' alti. beta = fantavoto per unita' di (P(vittoria) - P(sconfitta)).
     # Parte da un valore prudente [EURISTICA] e viene stimato sui tuoi voti reali (con shrink verso questo valore)
     "result_beta_prior": 0.15,
@@ -1439,6 +1441,248 @@ def calibra(storico_dir, voti_path, out_json, fc_dir=None, prov=None, season=Non
     return out
 
 
+# ============================================================== STATISTICHE.XLSX ===
+# Le statistiche ufficiali di Fantacalcio.it (foglio "Tutti" del file scaricabile dal sito) coprono TUTTA la Serie A,
+# con voto medio, fantamedia e - soprattutto - i rigori calciati (Rc) e segnati (R+): l'unico modo per sapere chi
+# tira davvero i rigori oggi, cosa che Understat da solo non dice.
+FC_COLS = {"Id": "id_fc", "R": "ruolo_fc", "Nome": "nome_fc", "Squadra": "squadra_fc", "Pv": "Pv", "Mv": "Mv",
+           "Fm": "Fm", "Gf": "Gf", "Gs": "Gs", "Rp": "Rp", "Rc": "Rc", "R+": "Rpiu", "R-": "Rmeno",
+           "Ass": "AssReali", "Amm": "AmmReali", "Esp": "EspReali", "Au": "Au"}
+
+
+def read_fc_stats(path):
+    """Legge il foglio 'Tutti' del file statistiche di Fantacalcio.it. None se il file non ha il formato atteso."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, data_only=True)
+    sheet = "Tutti" if "Tutti" in wb.sheetnames else wb.sheetnames[0]
+    ws = wb[sheet]
+    rows = list(ws.iter_rows(values_only=True))
+    header_row = next((i for i, r in enumerate(rows) if r and r[0] == "Id"), None)
+    if header_row is None:
+        return None
+    header = rows[header_row]
+    df = pd.DataFrame(rows[header_row + 1:], columns=header)
+    df = df.dropna(subset=["Nome"])
+    keep = [c for c in FC_COLS if c in df.columns]
+    df = df[keep].rename(columns=FC_COLS)
+    for c in ("Pv", "Gf", "Gs", "Rp", "Rc", "Rpiu", "Rmeno", "AssReali", "AmmReali", "EspReali", "Au", "Mv", "Fm"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return df
+
+
+def match_fc_stats(fc_df, pcur, titles):
+    """Abbina ogni riga del file Fantacalcio.it a un giocatore Understat (per nome e squadra). Ritorna
+    id Understat -> statistiche reali. I non abbinati (nomi molto diversi tra i due siti) restano fuori."""
+    pool = pcur[["id", "player_name", "team_title", "time"]].assign(tag=0)
+    out = {}
+    for r in fc_df.itertuples():
+        team = resolve_team(str(r.squadra_fc), titles)
+        hit = find_player(str(r.nome_fc), None, team or "", pool)
+        if hit is not None:
+            out[str(hit.id)] = r._asdict()
+    return out
+
+
+def latest_fc_stats(folder):
+    files = sorted(Path(folder).glob("*.xlsx"), key=lambda f: f.stat().st_mtime)
+    if not files:
+        return None, None
+    f = files[-1]
+    try:
+        return read_fc_stats(f), f.name
+    except Exception as e:  # noqa: BLE001
+        print(f"  ! non riesco a leggere {f.name}: {e}")
+        return None, f.name
+
+
+# ============================================================== MERCATO =====
+MKT_GROUP = {"F": "A", "M": "C", "D": "D"}
+
+
+def _bucket3(values, value, higher_is_better=True):
+    """Colloca 'value' tra i terzili di 'values' (tutte le squadre) -> 'Facile'/'Nella media'/'Difficile' e simili."""
+    vs = sorted(v for v in values if v is not None)
+    if len(vs) < 6 or value is None:
+        return "n/d"
+    lo, hi = vs[len(vs) // 3], vs[2 * len(vs) // 3]
+    good, mid, bad = ("Facile", "Nella media", "Difficile") if higher_is_better else ("Difficile", "Nella media", "Facile")
+    return good if value >= hi else bad if value < lo else mid
+
+
+def team_outlook(matches_all, S, lg, hf, af, now, n=5):
+    """Per ogni squadra: qualita' offensiva propria e difficolta' del calendario nelle prossime n partite,
+    sia per attaccare (att_diff, alto = comodo per attaccanti/centrocampisti) sia per difendere
+    (def_diff, alto = comodo per difensori/portieri, cioe' avversari deboli in attacco)."""
+    teams = sorted(S.keys())
+    fixtures = {t: [] for t in teams}
+    for m in matches_all:
+        h, a = m["h"]["title"], m["a"]["title"]
+        if to_local(m["datetime"]) < now:
+            continue
+        for t, opp, home in ((h, a, True), (a, h, False)):
+            if t in fixtures:
+                fixtures[t].append((opp, home))
+    raw = {}
+    for t in teams:
+        nxt = fixtures[t][:n]
+        if not nxt:
+            raw[t] = {"att": None, "def": None, "opps": []}
+            continue
+        att, dfc = [], []
+        for opp, home in nxt:
+            d_opp, a_opp = (S.get(opp) or {"A": 1, "D": 1})["D"], (S.get(opp) or {"A": 1, "D": 1})["A"]
+            att.append(d_opp * (hf if home else af))          # comodo per attaccanti se l'avversario difende male
+            dfc.append(1.0 / max(a_opp * (af if home else hf), 0.05))   # comodo per difensori se l'avversario attacca poco
+        raw[t] = {"att": float(np.mean(att)), "def": float(np.mean(dfc)), "opps": [o for o, _ in nxt]}
+    all_att = [v["att"] for v in raw.values()]
+    all_def = [v["def"] for v in raw.values()]
+    all_A = [s["A"] for s in S.values()]
+    med_A = float(np.median(all_A)) if all_A else 1.0
+    out = {}
+    for t in teams:
+        out[t] = {"attacco_label": "Forte" if S[t]["A"] >= med_A * 1.08 else "Debole" if S[t]["A"] < med_A * 0.92 else "Nella media",
+                  "cal_att": _bucket3(all_att, raw[t]["att"]), "cal_def": _bucket3(all_def, raw[t]["def"]),
+                  "prossimi": raw[t]["opps"]}
+    return out
+
+
+def market_report(pcur, priors, roster, titles, S=None, outlook=None, fc_stats=None, min_minutes=None):
+    if "goals" not in pcur.columns or "assists" not in pcur.columns:
+        return None, "Understat non fornisce i gol/assist reali in questo formato: analisi di mercato non disponibile."
+    min_minutes = min_minutes or CFG["mercato_min_minutes"]
+    has_np = "npg" in pcur.columns and "npxG" in pcur.columns   # gol/xG al netto dei rigori, se Understat li fornisce
+    cols = ["goals", "assists"] + (["npg", "npxG"] if has_np else [])
+    df = num(pcur.copy(), cols)
+    df["role"] = df["position"].astype(str).str.split().str[0].map(MKT_GROUP)
+    df = df.dropna(subset=["role"])
+    df = df[df.time >= min_minutes].reset_index(drop=True)
+    if df.empty:
+        return None, "Nessun giocatore con abbastanza minuti ancora in questa stagione."
+    if has_np:
+        df["rigori_segnati"], df["fonte_np"] = (df.goals - df.npg).clip(lower=0), "Understat"
+        g_col, xg_col = "npg", "npxG"       # esclude i rigori dal confronto: sono affidabili, non "fortuna"
+    else:
+        df["rigori_segnati"], df["fonte_np"] = 0, None
+        g_col, xg_col = "goals", "xG"
+    K = CFG["player_shrink_90s"]
+    pool = pcur[["id", "player_name", "team_title", "time"]].assign(tag=0)
+    mine = set()
+    for r in roster.itertuples():
+        team = resolve_team(r.squadra, titles)
+        override = getattr(r, "understat", None)
+        override = override if isinstance(override, str) and override.strip() else None
+        hit = find_player(r.nome, override, team or "", pool)
+        if hit is not None:
+            mine.add(str(hit.id))
+    n_fc_np = 0
+    rows = []
+    for r in df.itertuples():
+        pr = priors.get(r.role)
+        if pr is None:
+            continue
+        gol_reali, xg_ref, rigorista, fonte = getattr(r, g_col), getattr(r, xg_col), False, r.fonte_np
+        fc = (fc_stats or {}).get(str(r.id))
+        if fc:                                        # dati ufficiali Fantacalcio.it: piu' precisi e piu' aggiornati di Understat
+            gol_reali = max(0, fc["Gf"] - fc["Rpiu"])   # gol al netto dei rigori davvero segnati (non stimati)
+            rigorista = fc["Rc"] > 0
+            fonte = "Fantacalcio.it"
+            n_fc_np += 1
+        atteso = 3 * ((r.xG * 90 + K * pr["xG"]) / (r.time + K * 90)) + 1 * ((r.xA * 90 + K * pr["xA"]) / (r.time + K * 90))
+        reale = 3 * ((gol_reali * 90 + K * pr["xG"]) / (r.time + K * 90)) + 1 * ((r.assists * 90 + K * pr["xA"]) / (r.time + K * 90))
+        o = (outlook or {}).get(r.team_title, {})
+        rows.append({"id": str(r.id), "Giocatore": r.player_name, "Squadra": r.team_title, "Ruolo": r.role,
+                     "Minuti": int(r.time), "Gol": int(r.goals), "Rigori": int(r.rigori_segnati), "xG": round(xg_ref, 1),
+                     "Assist": int(r.assists), "xA": round(r.xA, 1), "Atteso90": round(atteso, 3), "Reale90": round(reale, 3),
+                     "Fortuna": round(reale - atteso, 3), "Tua": str(r.id) in mine, "Rigorista": rigorista, "FonteNP": fonte,
+                     "MvReale": round(fc["Mv"], 2) if fc and fc["Mv"] else None, "FmReale": round(fc["Fm"], 2) if fc and fc["Fm"] else None,
+                     "AttaccoSquadra": o.get("attacco_label", "n/d"),
+                     "Calendario": o.get("cal_def" if r.role == "D" else "cal_att", "n/d")})
+    rep = pd.DataFrame(rows)
+    out = {}
+    for role, g in rep.groupby("Ruolo"):
+        g = g.sort_values("Atteso90", ascending=False)
+        med = g["Atteso90"].median()
+        obiettivi = g[(~g.Tua) & (g.Fortuna <= -CFG["mercato_luck_soglia"])].sort_values("Fortuna").head(8)
+        sfortunati_tuoi = g[g.Tua & (g.Fortuna <= -CFG["mercato_luck_soglia"] / 2)].sort_values("Fortuna")
+        fortunati_tuoi = g[g.Tua & (g.Fortuna >= CFG["mercato_luck_soglia"] / 2) & (g.Atteso90 <= med)].sort_values("Fortuna", ascending=False)
+        top_processo = g.head(10)
+        out[role] = {"top": top_processo.to_dict("records"), "obiettivi": obiettivi.to_dict("records"),
+                     "sfortunati_tuoi": sfortunati_tuoi.to_dict("records"), "fortunati_tuoi": fortunati_tuoi.to_dict("records"),
+                     "n": len(g), "mediana_atteso": round(float(med), 3)}
+    out["_penalty_note"] = has_np
+    out["_fc_n"] = n_fc_np
+    return out, None
+
+
+def to_html_mercato(report, err, season, now):
+    ROLE_NAME = {"D": "Difensori", "C": "Centrocampisti", "A": "Attaccanti"}
+    css = ("body{font-family:system-ui,-apple-system,sans-serif;margin:0;padding:0 12px 24px;background:#fff;color:#111;max-width:760px;margin:auto}"
+           "@media(prefers-color-scheme:dark){body{background:#111318;color:#eee}}"
+           "h1{font-size:20px;margin:14px 0 2px}h2{font-size:16px;margin:22px 0 6px}h3{font-size:14px;margin:14px 0 4px;opacity:.85}"
+           ".s{opacity:.6;font-size:12px}table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:6px;display:block;overflow-x:auto}"
+           "th,td{padding:5px 7px;border-bottom:1px solid #8884;text-align:left;white-space:nowrap}"
+           ".pos{color:#16a34a;font-weight:600}.neg{color:#dc2626;font-weight:600}.tua{background:#2563eb22}")
+    body = (f"<h1>Mercato</h1><p class=s>Stagione {season}/{str(season + 1)[-2:]} \u00b7 aggiornato {now:%d/%m/%Y %H:%M} \u00b7 "
+            "confronta occasioni (xG/xA, senza rigori) e gol/assist reali di tutta la Serie A, con la forza offensiva della "
+            "squadra e il calendario delle prossime 5 partite. Non conosco le rose degli altri della tua lega: controlla tu "
+            "chi \u00e8 davvero libero prima di fare un\u2019offerta.</p>")
+    if err:
+        body += f"<p>{html.escape(err)}</p>"
+    else:
+        if report.get("_fc_n"):
+            body += (f"<p class=s>Rigori e rendimento reale di {report['_fc_n']} giocatori presi dal file statistiche di "
+                     "Fantacalcio.it (pi\u00f9 precisi di Understat); per gli altri, dati Understat.</p>")
+        elif not report.get("_penalty_note"):
+            body += "<p class=s>Understat non fornisce qui il dato senza rigori: il confronto include anche i rigori segnati.</p>"
+        else:
+            body += ("<p class=s>Carica il file statistiche di Fantacalcio.it in statistiche/ per identificare i rigoristi "
+                     "attuali e usare il voto reale invece di una stima. Vedi le istruzioni che Claude ti ha dato.</p>")
+        for role, d in report.items():
+            if role.startswith("_"):
+                continue
+            body += f"<h2>{ROLE_NAME.get(role, role)} ({d['n']} giocatori con abbastanza minuti)</h2>"
+
+            def table(rows, cols):
+                if not rows:
+                    return "<p class=s>Nessuno al momento.</p>"
+                h = "<table><tr>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr>"
+                for r in rows:
+                    cls = " class=tua" if r.get("Tua") else ""
+                    h += f"<tr{cls}>"
+                    for c in cols:
+                        v = r.get(c, "")
+                        style = ""
+                        if c == "Fortuna" and isinstance(v, (int, float)):
+                            style = ' class="pos"' if v > 0 else ' class="neg"' if v < 0 else ""
+                            v = f"{v:+.2f}"
+                        if c == "Giocatore" and r.get("Rigorista"):
+                            v = str(v) + " \U0001F3AF"
+                        h += f"<td{style}>{html.escape(str(v))}</td>"
+                    h += "</tr>"
+                return h + "</table>"
+
+            cols = ["Giocatore", "Squadra", "AttaccoSquadra", "Calendario", "Minuti", "Gol", "Rigori", "xG", "Assist", "xA", "Fortuna"]
+            if any(x.get("MvReale") is not None for x in d["top"] + d["obiettivi"] + d["sfortunati_tuoi"] + d["fortunati_tuoi"]):
+                cols = cols[:6] + ["MvReale", "FmReale"] + cols[6:]
+            body += "<h3>Da valutare in acquisto (occasioni buone, sotto-rendimento reale)</h3>" + table(d["obiettivi"], cols)
+            if d["sfortunati_tuoi"]:
+                body += "<h3>Nella tua rosa, sfortunati: non cederli</h3>" + table(d["sfortunati_tuoi"], cols)
+            if d["fortunati_tuoi"]:
+                body += "<h3>Nella tua rosa, sopra le loro occasioni: valuta di cederli ora</h3>" + table(d["fortunati_tuoi"], cols)
+            body += "<h3>I migliori per occasioni create (indipendentemente dalla fortuna)</h3>" + table(d["top"], cols)
+        body += ('<p class="s">"Fortuna" = (gol reali/90 - gol attesi/90, senza rigori quando disponibile)\u00d73 + '
+                 '(assist reali/90 - assist attesi/90), ristretti verso la media del ruolo con pochi minuti. Positiva = sta '
+                 'segnando pi\u00f9 di quanto meriti (rischio di calo); negativa = meno (probabile miglioramento). '
+                 '"AttaccoSquadra" = forza offensiva della sua squadra nella stagione. "Calendario" = difficolt\u00e0 delle '
+                 'prossime 5 partite (per i difensori conta la fase difensiva, per gli altri quella offensiva). '
+                 'Righe evidenziate = giocatori della tua rosa. I rigoristi attuali non sono identificati: la colonna "Rigori" '
+                 'mostra solo quanti ne ha gi\u00e0 segnati in stagione.</p>')
+    return (f"<!doctype html><html lang=it><head><meta charset=utf-8>"
+            f"<meta name=viewport content='width=device-width,initial-scale=1'><title>Mercato</title>"
+            f"<style>{css}</style></head><body>{body}</body></html>")
+
+
 # ============================================================== OUTPUT ======
 HTML_TEMPLATE = r"""<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Fanta Predictor</title>
@@ -1816,7 +2060,9 @@ def main(argv=None):
     ap.add_argument("--voti", default="voti_reali.csv", help="file con i tuoi voti reali")
     ap.add_argument("--calib", default="calibrazione.json")
     ap.add_argument("--tuning", default="tuning.json", help="parametri misurati dalla taratura")
+    ap.add_argument("--mercato", action="store_true", help="analisi di mercato (occasioni vs gol reali) ed esci")
     ap.add_argument("--taratura", action="store_true", help="misura sui dati di tutta la Serie A quanto pesare il passato ed esci")
+    ap.add_argument("--statistiche", default="statistiche", help="cartella col file statistiche di Fantacalcio.it (xlsx)")
     ap.add_argument("--formazioni", default="formazioni", help="cartella con i testi copiati da Fantacalcio.it")
     ap.add_argument("--season", type=int, help="anno di inizio stagione (default: automatico)")
     ap.add_argument("--moduli", default=",".join(MODULES), help="moduli ammessi dalla tua lega, es. 4-3-3,3-5-2")
@@ -1829,6 +2075,34 @@ def main(argv=None):
     ap.add_argument("--no-odds", action="store_true", help="non usare le quote dei bookmaker")
     a = ap.parse_args(argv)
 
+    if a.mercato:
+        n_ = datetime.now(ZoneInfo(CFG["tz"]))
+        season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
+        roster = pd.read_csv(a.rosa)
+        prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
+        pcur = num(pd.DataFrame(prov.players(season)), ["time", "xG", "xA", "xGBuildup", "yellow_cards", "red_cards", "goals", "assists", "npg", "npxG"])
+        pold = num(pd.DataFrame(prov.players(season - 1)), ["time", "xG", "xA", "xGBuildup", "yellow_cards", "red_cards"])
+        priors = role_priors(pd.concat([pcur, pold], ignore_index=True))
+        hist = build_team_history(prov, season)
+        S, lg, hf, af = team_strengths(hist)
+        titles = list(hist.keys())
+        outlook = team_outlook(prov.matches(season), S, lg, hf, af, n_.replace(tzinfo=None))
+        fc_raw, fc_name = latest_fc_stats(a.statistiche)
+        fc_stats = match_fc_stats(fc_raw, pcur, titles) if fc_raw is not None else None
+        if fc_stats is not None:
+            print(f"Statistiche Fantacalcio.it: {fc_name}, {len(fc_stats)}/{len(fc_raw)} giocatori riconosciuti")
+        elif fc_name:
+            print(f"Statistiche Fantacalcio.it: {fc_name} trovato ma non leggibile, uso solo Understat")
+        else:
+            print("Statistiche Fantacalcio.it: nessun file in statistiche/, uso solo Understat (rigoristi non identificati)")
+        report, err = market_report(pcur, priors, roster, titles, S, outlook, fc_stats)
+        if err:
+            print(err)
+        out = Path(a.out)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "mercato.html").write_text(to_html_mercato(report, err, season, n_.replace(tzinfo=None)), encoding="utf-8")
+        print(f"Analisi di mercato scritta in {out}/mercato.html")
+        return
     if a.taratura:
         n_ = datetime.now(ZoneInfo(CFG["tz"]))
         season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)

@@ -2,3 +2,4 @@ understatapi>=0.7
 pandas
 numpy
 tzdata
+openpyxl
