@@ -1518,40 +1518,55 @@ def _bucket3(values, value, higher_is_better=True):
     return good if value >= hi else bad if value < lo else mid
 
 
+def _fixture_comfort(opp, home, S, hf, af):
+    """Quanto e' comoda una partita: per un attaccante (att) e per un difensore (def), dato l'avversario e il campo."""
+    d_opp, a_opp = (S.get(opp) or {"A": 1, "D": 1})["D"], (S.get(opp) or {"A": 1, "D": 1})["A"]
+    return d_opp * (hf if home else af), 1.0 / max(a_opp * (af if home else hf), 0.05)
+
+
 def team_outlook(matches_all, S, lg, hf, af, now, n=5):
-    """Per ogni squadra: qualita' offensiva propria e difficolta' del calendario nelle prossime n partite,
-    sia per attaccare (att_diff, alto = comodo per attaccanti/centrocampisti) sia per difendere
-    (def_diff, alto = comodo per difensori/portieri, cioe' avversari deboli in attacco)."""
+    """Per ogni squadra: qualita' offensiva propria, difficolta' del calendario nelle prossime n partite E
+    di quelle gia' giocate in questa stagione, sia per attaccare (alto = comodo per attaccanti/centrocampisti)
+    sia per difendere (alto = comodo per difensori/portieri, cioe' avversari deboli in attacco)."""
     teams = sorted(S.keys())
-    fixtures = {t: [] for t in teams}
+    fut, past = {t: [] for t in teams}, {t: [] for t in teams}
     for m in matches_all:
         h, a = m["h"]["title"], m["a"]["title"]
-        if to_local(m["datetime"]) < now:
+        played = bool(m.get("isResult"))
+        bucket = past if played else (fut if to_local(m["datetime"]) >= now else None)
+        if bucket is None:
             continue
         for t, opp, home in ((h, a, True), (a, h, False)):
-            if t in fixtures:
-                fixtures[t].append((opp, home))
-    raw = {}
+            if t in bucket:
+                bucket[t].append((opp, home))
+    raw, raw_past = {}, {}
     for t in teams:
-        nxt = fixtures[t][:n]
-        if not nxt:
+        nxt = fut[t][:n]
+        if nxt:
+            att, dfc = zip(*(_fixture_comfort(o, h, S, hf, af) for o, h in nxt))
+            raw[t] = {"att": float(np.mean(att)), "def": float(np.mean(dfc)), "opps": [o for o, _ in nxt]}
+        else:
             raw[t] = {"att": None, "def": None, "opps": []}
-            continue
-        att, dfc = [], []
-        for opp, home in nxt:
-            d_opp, a_opp = (S.get(opp) or {"A": 1, "D": 1})["D"], (S.get(opp) or {"A": 1, "D": 1})["A"]
-            att.append(d_opp * (hf if home else af))          # comodo per attaccanti se l'avversario difende male
-            dfc.append(1.0 / max(a_opp * (af if home else hf), 0.05))   # comodo per difensori se l'avversario attacca poco
-        raw[t] = {"att": float(np.mean(att)), "def": float(np.mean(dfc)), "opps": [o for o, _ in nxt]}
+        gia = past[t]                                        # tutte le partite gia' giocate in stagione
+        if gia:
+            att, dfc = zip(*(_fixture_comfort(o, h, S, hf, af) for o, h in gia))
+            raw_past[t] = {"att": float(np.mean(att)), "def": float(np.mean(dfc)), "n": len(gia)}
+        else:
+            raw_past[t] = {"att": None, "def": None, "n": 0}
     all_att = [v["att"] for v in raw.values()]
     all_def = [v["def"] for v in raw.values()]
     all_A = [s["A"] for s in S.values()]
     med_A = float(np.median(all_A)) if all_A else 1.0
+    all_att_p = [v["att"] for v in raw_past.values()]
+    all_def_p = [v["def"] for v in raw_past.values()]
     out = {}
     for t in teams:
         out[t] = {"attacco_label": "Forte" if S[t]["A"] >= med_A * 1.08 else "Debole" if S[t]["A"] < med_A * 0.92 else "Nella media",
                   "cal_att": _bucket3(all_att, raw[t]["att"]), "cal_def": _bucket3(all_def, raw[t]["def"]),
-                  "prossimi": raw[t]["opps"]}
+                  "prossimi": raw[t]["opps"],
+                  "cal_att_finora": _bucket3(all_att_p, raw_past[t]["att"]) if raw_past[t]["n"] >= 3 else "n/d",
+                  "cal_def_finora": _bucket3(all_def_p, raw_past[t]["def"]) if raw_past[t]["n"] >= 3 else "n/d",
+                  "n_giocate": raw_past[t]["n"]}
     return out
 
 
@@ -1607,6 +1622,7 @@ def market_report(pcur, priors, roster, titles, S=None, outlook=None, fc_stats=N
                      "MvReale": round(fc["Mv"], 2) if fc and fc["Mv"] else None, "FmReale": round(fc["Fm"], 2) if fc and fc["Fm"] else None,
                      "AttaccoSquadra": o.get("attacco_label", "n/d"),
                      "Calendario": o.get("cal_def" if r.role == "D" else "cal_att", "n/d"),
+                     "CalendarioFinora": o.get("cal_def_finora" if r.role == "D" else "cal_att_finora", "n/d"),
                      "Affidabile": r.time >= min_minutes})
     rep = pd.DataFrame(rows)
     rep["_med"] = rep.groupby("Ruolo")["Atteso90"].transform("median")
@@ -1705,10 +1721,8 @@ def to_html_mercato(report, err, season, now):
             if any(x.get("MvReale") is not None for x in d["top"] + d["obiettivi"] + d["sfortunati_tuoi"] + d["fortunati_tuoi"]):
                 cols = cols[:6] + ["MvReale", "FmReale"] + cols[6:]
             body += "<h3>Da valutare in acquisto (occasioni buone, sotto-rendimento reale)</h3>" + table(d["obiettivi"], cols)
-            if d["sfortunati_tuoi"]:
-                body += "<h3>Nella tua rosa, sfortunati: non cederli</h3>" + table(d["sfortunati_tuoi"], cols)
-            if d["fortunati_tuoi"]:
-                body += "<h3>Nella tua rosa, sopra le loro occasioni: valuta di cederli ora</h3>" + table(d["fortunati_tuoi"], cols)
+            body += "<h3>Nella tua rosa, sfortunati: non cederli</h3>" + table(d["sfortunati_tuoi"], cols)
+            body += "<h3>Nella tua rosa, da valutare in cessione (sopra le loro occasioni)</h3>" + table(d["fortunati_tuoi"], cols)
             body += "<h3>I migliori per occasioni create (indipendentemente dalla fortuna)</h3>" + table(d["top"], cols)
         body += ('<p class="s">"Fortuna" = (gol reali/90 - gol attesi/90, senza rigori quando disponibile)\u00d73 + '
                  '(assist reali/90 - assist attesi/90), ristretti verso la media del ruolo con pochi minuti. Positiva = sta '
@@ -1729,8 +1743,10 @@ def to_html_mercato(report, err, season, now):
               "c.innerHTML='<b>'+p.Giocatore+rig+'</b><div class=s>'+p.Squadra+' ('+p.Ruolo+') \u00b7 '+p.Minuti+' minuti'+voti+'</div>"
               "<div class=row2><div>Gol: <b>'+p.Gol+'</b></div><div>xG: <b>'+p.xG+'</b></div><div>Assist: <b>'+p.Assist+'</b></div>"
               "<div>xA: <b>'+p.xA+'</b></div><div>Rigori segnati: <b>'+p.Rigori+'</b></div></div>"
-              "<div class=row2><div>Attacco squadra: <b>'+p.AttaccoSquadra+'</b></div><div>Calendario: <b>'+p.Calendario+'</b></div>"
+              "<div class=row2><div>Attacco squadra: <b>'+p.AttaccoSquadra+'</b></div><div>Prossime 5: <b>'+p.Calendario+'</b></div>"
               "<div>Fortuna: <b style=\"color:'+colf(p.Fortuna)+'\">'+(p.Fortuna>0?'+':'')+p.Fortuna.toFixed(2)+'</b></div></div>"
+              "<div class=s style=\"margin-top:2px\">Avversari affrontati finora: <b>'+p.CalendarioFinora+'</b> (statistiche ottenute contro un calendario '+"
+              "(p.CalendarioFinora==='Difficile'?'difficile: probabilmente vale anche di pi\u00f9':p.CalendarioFinora==='Facile'?'comodo: valutalo con un po\u2019 di cautela':'nella media')+')</div>"
               "<div style=\"margin-top:6px\">'+p.Verdetto+'</div>';}"
               "function search(){const q=document.getElementById('search').value.trim().toLowerCase();const M=document.getElementById('matches');"
               "M.innerHTML='';document.getElementById('card').style.display='none';if(!q)return;"
