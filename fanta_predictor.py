@@ -2106,14 +2106,16 @@ if (D.calib && D.calib.mae_per_giornata) { const m = D.calib.mae_per_giornata, g
     const lines = document.getElementById("oppo").value.split("\n").map(x=>x.trim()).filter(Boolean);
     const out = document.getElementById("h2hout");
     if (!lines.length) { out.innerHTML = '<div class="info">Incolla prima gli 11 nomi.</div>'; return; }
+    const avgFv = ALLP.length ? ALLP.reduce((q,p)=>q+p.EstFv,0) / ALLP.length : 6.3;   // valore medio: usato per chi non riconosco, per non sottostimare l'avversario
     const matched = [], missing = [];
     lines.forEach(l => { const p = findOpp(l); if (p) matched.push(p); else missing.push(l); });
     const mine = cur ? cur.tot : (S.filter(s=>s.disp).sort((a,b)=>ev(b)-ev(a)).slice(0,11).reduce((q,s)=>q+ev(s),0));
-    const theirs = matched.reduce((q,p)=>q+p.EstFv, 0);
+    const theirs = matched.reduce((q,p)=>q+p.EstFv, 0) + missing.length * avgFv;
     const diff = mine - theirs, prob = 1 / (1 + Math.exp(-diff / D.h2hScale));
     let html = '<div class="row2"><div>Tua formazione: <b>' + mine.toFixed(1) + '</b></div><div>Avversario (stima): <b>' + theirs.toFixed(1) + '</b></div>'
       + '<div>Probabilit\u00e0 di vincere: <b style="color:' + (prob>=.5?'#16a34a':'#dc2626') + '">' + Math.round(prob*100) + '%</b></div></div>';
-    if (missing.length) html += '<div class="info">Non riconosciuti: ' + missing.join(', ') + '</div>';
+    html += '<div class="s">Riconosciuti ' + matched.length + '/' + lines.length + (missing.length ? ' \u2014 ' + missing.length + ' non trovati, stimati con il valore medio (' + avgFv.toFixed(1) + ') per non sottostimare l\u2019avversario' : '') + '.</div>';
+    if (missing.length) html += '<div class="info">Non riconosciuti (probabilmente senza ancora minuti registrati in stagione su Understat): ' + missing.join(', ') + '</div>';
     html += '<div class="info">Avversario: ' + matched.map(p=>p.Giocatore+' ('+p.EstFv.toFixed(1)+')').join(', ') + '</div>';
     if (prob < 0.5) { const bench = S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((a,b)=>b.P_gol-a.P_gol).slice(0,3);
       if (bench.length) html += '<div class="info" style="margin-top:4px">Parti sfavorito: in panchina hai, con pi\u00f9 probabilit\u00e0 di gol, ' +
