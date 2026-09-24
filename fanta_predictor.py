@@ -80,6 +80,7 @@ CFG = {
     "mercato_min_minutes": 450,   # tetto massimo di minuti richiesti (si applica da meta' stagione in poi)
     "mercato_min_frac": 0.55,     # ...prima, la soglia e' questa frazione dei minuti disponibili fino ad oggi
     "mercato_search_min": 45,     # minuti minimi per comparire nella ricerca (piu' basso: solo per escludere chi non ha mai giocato)
+    "h2h_scale": 9.0,             # [EURISTICA] scarto tipico tra due formazioni: usato per stimare la probabilita' di vittoria
     "mercato_luck_soglia": 0.30,  # scarto minimo (in fantavoto/90) tra reale e atteso per segnalare un giocatore
     # effetto risultato: chi vince prende voti un po' piu' alti. beta = fantavoto per unita' di (P(vittoria) - P(sconfitta)).
     # Parte da un valore prudente [EURISTICA] e viene stimato sui tuoi voti reali (con shrink verso questo valore)
@@ -854,6 +855,98 @@ def best_lineup(df, modules=None):
     return mod, tot, xi, bench
 
 
+# ============================================================== BASELINE PER TUTTI ===
+# Stima leggera (senza chiamate di rete aggiuntive: solo dati di stagione gia' scaricati) del fantavoto
+# atteso in una partita "neutra" per OGNI giocatore di Serie A. Serve al testa a testa: per i tuoi giocatori
+# uso la previsione precisa della giornata, per quelli dell'avversario serve qualcosa comunque disponibile.
+def season_baseline(pcur, priors, S, lg):
+    df = pcur.copy()
+    df["role"] = df["position"].astype(str).str.split().str[0].map(POS_MAP)
+    df = df.dropna(subset=["role"])
+    K = CFG["player_shrink_90s"]
+    out = []
+    for r in df.itertuples():
+        pr = priors.get(r.role)
+        team_S = S.get(r.team_title) or {"A": 1.0, "D": 1.0}
+        if r.role == "P":
+            p_cs = float(np.exp(-lg * team_S["D"]))
+            est = CFG["base_vote"] + CFG["clean_sheet"]["P"] * p_cs + CFG["conceded_gk"] * lg * team_S["D"]
+        else:
+            if pr is None:
+                continue
+            rate_g = (r.xG * 90 + K * pr["xG"]) / (r.time + K * 90) if r.time or K else pr["xG"]
+            rate_a = (r.xA * 90 + K * pr["xA"]) / (r.time + K * 90) if r.time or K else pr["xA"]
+            est = CFG["base_vote"] + CFG["goal"] * rate_g + CFG["assist"] * rate_a
+            if r.role == "D":
+                p_cs = float(np.exp(-lg * team_S["D"]))
+                est += CFG["clean_sheet"]["D"] * p_cs
+        out.append({"Giocatore": r.player_name, "Squadra": r.team_title, "Ruolo": r.role,
+                    "EstFv": round(float(est), 2), "Minuti": int(r.time)})
+    return out
+
+
+# ============================================================== STATO E PROMEMORIA ===
+def _days_since(ts):
+    return (time.time() - ts) / 86400 if ts else None
+
+
+def data_status(a, odds_msg, inj_msg, calib, tune_meta, fixtures, now):
+    """Riepilogo di quanto sono fresche le varie fonti, per il pannello di stato e i promemoria."""
+    st = {"odds": odds_msg, "inj": inj_msg}
+    fc_files = sorted(Path(a.statistiche).glob("*.xlsx"), key=lambda f: f.stat().st_mtime) if Path(a.statistiche).exists() else []
+    if fc_files:
+        d = _days_since(fc_files[-1].stat().st_mtime)
+        st["fc"] = f"{fc_files[-1].name} (caricato {d:.0f} giorni fa)"
+        st["fc_days"] = d
+    else:
+        st["fc"], st["fc_days"] = "nessun file in statistiche/", None
+    form_files = sorted(Path(a.formazioni).glob("*.txt"), key=lambda f: f.stat().st_mtime) if Path(a.formazioni).exists() else []
+    if form_files:
+        d = _days_since(form_files[-1].stat().st_mtime)
+        st["form"] = f"ultimo salvato {d:.1f} giorni fa"
+        st["form_days"] = d
+    else:
+        st["form"], st["form_days"] = "nessuno salvato", None
+    if Path(a.voti).exists():
+        try:
+            v = read_voti(a.voti)
+            st["voti_ultima"] = int(v.giornata.max()) if len(v) else None
+        except Exception:  # noqa: BLE001
+            st["voti_ultima"] = None
+    else:
+        st["voti_ultima"] = None
+    cal_agg = (calib or {}).get("aggiornato")
+    st["calib"] = cal_agg or "mai calcolata"
+    st["tuning"] = (tune_meta or {}).get("aggiornato") or "mai eseguita"
+    rep = (calib or {}).get("report") or {}
+    st["calib_n"] = rep.get("n", 0)
+    return st
+
+
+def build_reminders(status, rno, now, kickoff):
+    """Piccola lista di cose da fare questa settimana, solo se manca davvero qualcosa."""
+    rem = []
+    days_to_ko = (kickoff - now).total_seconds() / 86400 if kickoff else None
+    if status.get("form_days") is None or (days_to_ko is not None and 0 <= days_to_ko <= 2 and status["form_days"] > 2):
+        rem.append("Incolla le probabili formazioni da Fantacalcio.it e salvale (pulsante \"Salva su GitHub\") prima della scadenza.")
+    if status.get("voti_ultima") is not None and rno and status["voti_ultima"] < rno - 1:
+        rem.append(f"Manda i voti della giornata {rno - 1}: in voti_reali.csv l'ultima registrata \\u00e8 la {status['voti_ultima']}.")
+    elif status.get("voti_ultima") is None:
+        rem.append("Non ho ancora nessun voto reale: mandameli dopo la prossima giornata per far partire la calibrazione.")
+    if status.get("fc_days") is None or status["fc_days"] > 10:
+        rem.append("Ricarica il file statistiche di Fantacalcio.it in statistiche/ (utile per rigoristi e voto reale nel Mercato).")
+    if status["tuning"] == "mai eseguita":
+        rem.append("Lancia il workflow \"taratura\" almeno una volta (Actions \u2192 taratura \u2192 Run workflow).")
+    else:
+        try:
+            d = (now - datetime.strptime(status["tuning"], "%Y-%m-%d %H:%M")).days
+            if d > 35:
+                rem.append(f"La taratura ha {d} giorni: puoi rilanciarla (Actions \u2192 taratura).")
+        except ValueError:
+            pass
+    return rem
+
+
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
         odds_events=None, calib=None, odds_note=None, inj_key=None,
@@ -889,6 +982,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
     titles = list(hist.keys())
     off = (calib or {}).get("offset", {})
     beta = float((calib or {}).get("result_beta", CFG["result_beta_prior"]))
+    baseline = season_baseline(pcur, priors, S, lg) if not check_only else []
 
     fx = {}
     for m in fixtures:
@@ -1014,7 +1108,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
     if inj_msg.startswith("attivi"):
         inj_msg += f" - {n_inj} segnalazioni sulla tua rosa" if inj_msg != "attivi" else f" ({n_inj} segnalazioni sulla tua rosa)"
     kicks = [{"t": m["datetime"].replace(" ", "T") + "Z", "m": f"{m['h']['title']}-{m['a']['title']}"} for m in fixtures]
-    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg, "kicks": kicks}
+    info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg,
+            "kicks": kicks, "baseline": baseline}
     if check_only:
         return None, None, problems, info
     return pd.DataFrame(rows), fixtures, problems, info
@@ -1794,6 +1889,13 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 </style></head><body>
 <h1>Fanta Predictor</h1>
 <div class="s" id="meta"></div>
+<div id="remind" class="card" style="display:none;border-left:3px solid #d97706"></div>
+<details class="card" id="statusdet"><summary>Stato dei dati</summary><div id="statuscard" class="s" style="margin-top:6px"></div></details>
+<details class="card" id="h2hdet"><summary>Testa a testa</summary>
+  <div class="s" style="margin:6px 0">Incolla gli 11 nomi della formazione avversaria (uno per riga, va bene copiarli cos\u00ec come sono nell\u2019app): stimo il punteggio di entrambe e la probabilit\u00e0 di vincere. Per i tuoi uso la previsione precisa della giornata; per i suoi solo una stima di massima basata sulla stagione, senza sapere se schiera davvero questi titolari.</div>
+  <textarea id="oppo" rows="6" placeholder="Es.\nDi Gregorio\nBremer\nKalulu\n..."></textarea>
+  <div class="bh" style="margin-top:6px"><button id="h2hcalc">Calcola</button></div><div id="h2hout"></div>
+</details>
 <div id="bar">
   <div class="bh"><b id="lt">Formazione</b>
     <select id="mod" aria-label="Modulo"></select><button id="pbtn">Incolla elenco</button><button id="copy">Copia</button></div>
@@ -1960,6 +2062,65 @@ if (D.pagella && D.pagella.rounds && D.pagella.rounds.length) { const P = docume
 }
 document.getElementById("beta").textContent = "Effetto risultato: la vittoria attesa della squadra sposta il fantavoto di circa " + (D.beta != null ? D.beta.toFixed(2) : "0.15") + " per ogni punto di (probabilit\u00e0 di vittoria - probabilit\u00e0 di sconfitta).";
 tick(); setInterval(() => { tick(); update(); }, 60000);
+
+// ---------------- stato, promemoria, grafico affidabilita' ----------------
+if (D.reminders && D.reminders.length) { const R = document.getElementById("remind"); R.style.display = "block";
+  R.appendChild(mk("b", null, "Da fare questa settimana")); D.reminders.forEach(t => R.appendChild(mk("div", "info", t))); }
+(function(){
+  const s = D.status || {}, C = document.getElementById("statuscard");
+  const line = t => C.appendChild(mk("div", null, t));
+  line("Quote bookmaker: " + (s.odds || "n/d"));
+  line("Infortuni/squalifiche: " + (s.inj || "n/d"));
+  line("Statistiche Fantacalcio.it: " + (s.fc || "n/d"));
+  line("Probabili formazioni incollate: " + (s.form || "n/d"));
+  line("Voti reali: ultima giornata registrata " + (s.voti_ultima != null ? s.voti_ultima : "nessuna"));
+  line("Calibrazione: " + (s.calib || "mai calcolata") + (s.calib_n ? " (" + s.calib_n + " prestazioni)" : ""));
+  line("Taratura: " + (s.tuning || "mai eseguita"));
+})();
+if (D.calib && D.calib.mae_per_giornata) { const m = D.calib.mae_per_giornata, gs = Object.keys(m).map(Number).sort((a,b)=>a-b);
+  if (gs.length > 1) { const vals = gs.map(g => m[g]), w = 46, h = 60, gap = 10, W = gs.length * (w + gap) + gap, H = h + 34;
+    const maxv = Math.max(...vals, 0.01);
+    let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:420px;height:auto">';
+    gs.forEach((g, i) => { const v = vals[i], bh = Math.max(4, (v / maxv) * h), x = gap + i * (w + gap), y = h - bh;
+      svg += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + bh + '" rx="3" fill="var(--acc)"></rect>';
+      svg += '<text x="' + (x + w/2) + '" y="' + (y - 4) + '" font-size="10" text-anchor="middle" fill="currentColor">' + v.toFixed(2) + '</text>';
+      svg += '<text x="' + (x + w/2) + '" y="' + (h + 14) + '" font-size="10" text-anchor="middle" fill="currentColor" opacity=".7">G' + g + '</text>'; });
+    svg += '</svg>';
+    const cal = document.getElementById("cal");
+    const box = mk("div"); box.innerHTML = '<b>Errore per giornata (pi\u00f9 basso = meglio)</b>' + svg;
+    cal.appendChild(box); }
+}
+// ---------------- testa a testa ----------------
+(function(){
+  const ALLP = D.allPlayers || [];
+  const normH = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\u00f8/gi,'o').replace(/\u00e6/gi,'ae').replace(/\u0142/gi,'l').replace(/\u0111/gi,'d').replace(/\u00df/g,'ss').toLowerCase();
+  function findOpp(name){
+    const nt = normH(name).replace(/[^a-z ]/g,' ').split(/\s+/).filter(t=>t.length>1);
+    if (!nt.length) return null;
+    let best = null;
+    ALLP.forEach(p => { const pt = normH(p.Giocatore).replace(/[^a-z ]/g,' ').split(/\s+/).filter(t=>t.length>1);
+      if (nt.every(t => pt.includes(t))) { if (!best || p.Minuti > best.Minuti) best = p; } });
+    return best;
+  }
+  document.getElementById("h2hcalc").addEventListener("click", () => {
+    const lines = document.getElementById("oppo").value.split("\n").map(x=>x.trim()).filter(Boolean);
+    const out = document.getElementById("h2hout");
+    if (!lines.length) { out.innerHTML = '<div class="info">Incolla prima gli 11 nomi.</div>'; return; }
+    const matched = [], missing = [];
+    lines.forEach(l => { const p = findOpp(l); if (p) matched.push(p); else missing.push(l); });
+    const mine = cur ? cur.tot : (S.filter(s=>s.disp).sort((a,b)=>ev(b)-ev(a)).slice(0,11).reduce((q,s)=>q+ev(s),0));
+    const theirs = matched.reduce((q,p)=>q+p.EstFv, 0);
+    const diff = mine - theirs, prob = 1 / (1 + Math.exp(-diff / D.h2hScale));
+    let html = '<div class="row2"><div>Tua formazione: <b>' + mine.toFixed(1) + '</b></div><div>Avversario (stima): <b>' + theirs.toFixed(1) + '</b></div>'
+      + '<div>Probabilit\u00e0 di vincere: <b style="color:' + (prob>=.5?'#16a34a':'#dc2626') + '">' + Math.round(prob*100) + '%</b></div></div>';
+    if (missing.length) html += '<div class="info">Non riconosciuti: ' + missing.join(', ') + '</div>';
+    html += '<div class="info">Avversario: ' + matched.map(p=>p.Giocatore+' ('+p.EstFv.toFixed(1)+')').join(', ') + '</div>';
+    if (prob < 0.5) { const bench = S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((a,b)=>b.P_gol-a.P_gol).slice(0,3);
+      if (bench.length) html += '<div class="info" style="margin-top:4px">Parti sfavorito: in panchina hai, con pi\u00f9 probabilit\u00e0 di gol, ' +
+        bench.map(s=>s.Giocatore+' ('+s.P_gol+'%)').join(', ') + ' \u2014 valuta di rischiare al posto di una scelta pi\u00f9 sicura.</div>'; }
+    out.innerHTML = html;
+  });
+})();
 document.getElementById("meta").textContent = "Giornata " + D.gno + " \u00b7 aggiornato " + D.agg + " \u00b7 quote bookmaker: " + D.odds_msg + " \u00b7 infortuni: " + D.inj_msg;
 document.getElementById("reset").addEventListener("click", () => { S.forEach(s => { s.p = s.p0; s.disp = !!s.Disp; s.force = 0; }); modSel = "auto"; sel.value = "auto";
   try { localStorage.removeItem(KEY); } catch (e) {} build(); update(); });
@@ -2101,7 +2262,7 @@ build(); update();
 </script></body></html>"""
 
 
-def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
+def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None, status=None, reminders=()):
     d = df.reset_index(drop=True)
     order = d.assign(_o=d.Ruolo.map({"P": 0, "D": 1, "C": 2, "A": 3})).sort_values(
         ["_o", "EV"], ascending=[True, False])
@@ -2127,6 +2288,10 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None):
         "kicks": info.get("kicks", []),
         "beta": (calib or {}).get("result_beta", CFG["result_beta_prior"]),
         "fcmap": (calib or {}).get("fc_map") or [],
+        "allPlayers": info.get("baseline", []),
+        "h2hScale": CFG["h2h_scale"],
+        "status": status or {},
+        "reminders": list(reminders),
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     return HTML_TEMPLATE.replace("__DATA__", data)
@@ -2217,10 +2382,11 @@ def main(argv=None):
         except Exception:  # noqa: BLE001
             calib = None
 
-    tune = None
+    tune, tune_meta = None, None
     if Path(a.tuning).exists():
         try:
-            tune = json.loads(Path(a.tuning).read_text(encoding="utf-8")).get("roles")
+            tune_meta = json.loads(Path(a.tuning).read_text(encoding="utf-8"))
+            tune = tune_meta.get("roles")
         except Exception:  # noqa: BLE001
             tune = None
     if a.backtest:
@@ -2267,7 +2433,10 @@ def main(argv=None):
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     df.sort_values("EV", ascending=False).to_csv(out / "previsioni.csv", index=False)
-    (out / "index.html").write_text(to_html(df, fixtures, now, modules, problems, info, calib), encoding="utf-8")
+    status = data_status(a, info.get("odds_msg", ""), info.get("inj_msg", ""), calib, tune_meta, fixtures, now)
+    kickoff = to_local(fixtures[0]["datetime"]) if fixtures else None
+    reminders = build_reminders(status, info.get("rno", 0), now, kickoff)
+    (out / "index.html").write_text(to_html(df, fixtures, now, modules, problems, info, calib, status, reminders), encoding="utf-8")
 
     pd.set_option("display.width", 200)
     show = ["Giocatore", "Ruolo", "Avversario", "Voto", "Fantavoto", "P_gol", "P_ass", "CS%", "Titolare%", "Nota"]
