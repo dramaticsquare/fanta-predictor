@@ -7,6 +7,10 @@
 # Sotto, API_FOOTBALL_SITE dice a quale dei due appartiene la chiave.
 # Mercato: per i rigoristi e il voto reale, carica ogni tanto il file statistiche di Fantacalcio.it nella
 # cartella statistiche/ del repository (sostituisce il precedente); lo trova da solo al prossimo run.
+#
+# Ogni passaggio dopo il selftest e' isolato (continue-on-error): se uno fallisce (per esempio il Mercato per
+# un file xlsx rovinato), gli altri vanno avanti comunque e il salvataggio finale parte sempre. Il riepilogo
+# in fondo al log dice chiaramente se qualcosa e' andato storto, cosi' non passa inosservato.
 name: aggiorna-previsioni
 on:
   schedule: [{cron: "0 7 * * *"}]
@@ -16,6 +20,7 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     env:
       ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
       API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
@@ -29,11 +34,33 @@ jobs:
         run: |
           if [ -n "$ODDS_API_KEY" ]; then echo "ODDS_API_KEY presente (${#ODDS_API_KEY} caratteri)"; else echo "ODDS_API_KEY assente"; fi
           if [ -n "$API_FOOTBALL_KEY" ]; then echo "API_FOOTBALL_KEY presente (${#API_FOOTBALL_KEY} caratteri)"; else echo "API_FOOTBALL_KEY assente"; fi
-      - run: python fanta_predictor.py --calibra
-      - run: python fanta_predictor.py --refresh
-      - run: python fanta_predictor.py --mercato
-      - run: |
+      - name: Selftest (senza rete)
+        run: python fanta_predictor.py --selftest
+      - name: Calibrazione
+        id: calibra
+        continue-on-error: true
+        run: python fanta_predictor.py --calibra
+      - name: Previsioni (index.html)
+        id: refresh
+        continue-on-error: true
+        run: python fanta_predictor.py --refresh
+      - name: Mercato
+        id: mercato
+        continue-on-error: true
+        run: python fanta_predictor.py --mercato
+      - name: Salva su GitHub
+        if: always()
+        run: |
           git config user.name "fanta-bot"
           git config user.email "bot@users.noreply.github.com"
           git add -A docs storico calibrazione.json
           git diff --cached --quiet || (git commit -m "aggiornamento previsioni" && git push)
+      - name: Riepilogo
+        if: always()
+        run: |
+          echo "Calibrazione: ${{ steps.calibra.outcome }}"
+          echo "Previsioni:   ${{ steps.refresh.outcome }}"
+          echo "Mercato:      ${{ steps.mercato.outcome }}"
+          if [ "${{ steps.calibra.outcome }}" = "failure" ] || [ "${{ steps.refresh.outcome }}" = "failure" ] || [ "${{ steps.mercato.outcome }}" = "failure" ]; then
+            echo "::warning::Uno o piu' passaggi sono falliti: apri i rispettivi step per i dettagli. Quanto e' stato generato con successo e' comunque stato salvato."
+          fi
