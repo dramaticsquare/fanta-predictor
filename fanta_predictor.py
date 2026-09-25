@@ -601,7 +601,7 @@ def player_profile(pm, team, team_hist, role, priors, cards, tune=None):
     th = (tune or {}).get(role) or {}                     # parametri misurati dalla taratura (se presente)
     hl = th.get("half_life", CFG["player_half_life"])
     K = th.get("shrink", CFG["player_shrink_90s"])
-    out = {"n_matches": 0, "trend": None}
+    out = {"n_matches": 0, "trend": None, "eff90": 0.0}
     pm = num(pd.DataFrame(pm), ["time", "xG", "xA", "xGBuildup"]) if len(pm) else pd.DataFrame()
     if len(pm):
         pm["date"] = pd.to_datetime(pm["date"])
@@ -609,6 +609,8 @@ def player_profile(pm, team, team_hist, role, priors, cards, tune=None):
     if len(pm):
         w = decay(len(pm), hl)
         s90 = (w * pm.time / 90).sum()
+        out["eff90"] = float(s90)      # minuti "pesati" equivalenti a 90': quanto e' solida la stima, indipendentemente
+                                        # dall'incertezza intrinseca di una singola partita (che resta comunque alta)
         out["xg90"] = ((w * pm.xG).sum() + K * pr["xG"]) / (s90 + K)
         out["xa90"] = ((w * pm.xA).sum() + K * pr["xA"]) / (s90 + K)
         out["bu90"] = ((w * pm.xGBuildup).sum() + K * pr["xGBuildup"]) / (s90 + K)
@@ -673,7 +675,8 @@ def _series(pm, first_season):
 
 
 def _mse_grid(series, prior, min_hist=8, min_min=20):
-    """Errore quadratico medio (pesato sui minuti) della stima 'xGI per 90' in funzione di (mezza vita, ristringimento)."""
+    """Errore quadratico medio (pesato sui minuti) della stima 'xGI per 90' in funzione di (mezza vita, ristringimento),
+    con anche il numero effettivo di osservazioni per cella (serve alla regola 1-SE che sceglie i parametri)."""
     out = {}
     for h in TUNE_HL:
         lam = 0.5 ** (1.0 / h)
@@ -689,8 +692,21 @@ def _mse_grid(series, prior, min_hist=8, min_min=20):
                         wt += w
                     S = lam * S + x[t]
                     W = lam * W + m[t] / 90.0
-            out[(h, K)] = sq / wt if wt else float("nan")
+            out[(h, K)] = (sq / wt if wt else float("nan"), wt)
     return out
+
+
+def _select_1se(grid):
+    """Regola 1-SE (come in lasso/ridge): non prende la cella con l'errore piu' basso in assoluto (rischia di essere
+    li' per rumore, con pochi giocatori per ruolo), ma la piu' prudente (mezza vita e ristringimento piu' alti) tra
+    quelle il cui errore e' comunque entro un errore standard da quella migliore."""
+    valid = {k: v for k, v in grid.items() if np.isfinite(v[0]) and v[1] > 0}
+    if not valid:
+        return TUNE_HL[len(TUNE_HL) // 2], TUNE_K[len(TUNE_K) // 2]
+    best_mse, best_n = min(valid.values(), key=lambda v: v[0])
+    se = best_mse * math.sqrt(2.0 / best_n)                 # approssimazione classica dell'errore standard di una MSE
+    within = [k for k, (mse, n) in valid.items() if mse <= best_mse + se]
+    return max(within, key=lambda k: (k[0], k[1]))           # tra questi, la piu' prudente (piu' memoria, piu' shrink)
 
 
 def _feature_tests(series, priors, h, K, min_hist=8, min_min=20):
@@ -767,20 +783,22 @@ def run_tuning(prov, season, out_json, n_back=3):
         priors = {"xgi": sum(x.sum() for _m, x, *_ in series) / tot_n, "shots": sum(s.sum() for _m, _x, s, _k in series) / tot_n,
                   "kp": sum(k.sum() for _m, _x, _s, k in series) / tot_n}
         grid = _mse_grid(series, priors["xgi"])
-        bh, bK = min(grid, key=lambda k: grid[k])
+        bh, bK = _select_1se(grid)
+        mse_best, mse_default = grid[(bh, bK)][0], grid[(10, 6)][0]
         ft, s2, n_obs = _feature_tests(series, priors, bh, bK)
         c, z = ft.get("xgi", {}).get("coef", 0.0), ft.get("xgi", {}).get("z", 0.0)
         beta = round(min(c, 0.5), 3) if (c > 0 and z >= 2) else 0.0
         role = GROUP[g]
         out["roles"][role] = {
             "half_life": float(bh), "shrink": float(bK), "trend_beta": beta, "sigma2_90": round(s2, 4) if s2 else None,
-            "mse_best": round(grid[(bh, bK)], 5), "mse_default": round(grid[(10, 6)], 5),
-            "miglioramento_pct": round(100 * (grid[(10, 6)] - grid[(bh, bK)]) / grid[(10, 6)], 2),
-            "mse_per_mezza_vita": {str(h): round(min(grid[(h, k)] for k in TUNE_K), 5) for h in TUNE_HL},
+            "mse_best": round(mse_best, 5), "mse_default": round(mse_default, 5),
+            "miglioramento_pct": round(100 * (mse_default - mse_best) / mse_default, 2) if mse_default else None,
+            "mse_per_mezza_vita": {str(h): round(min(grid[(h, k)][0] for k in TUNE_K), 5) for h in TUNE_HL},
             "forma_recente": {f: {k: round(v, 3) for k, v in d.items()} for f, d in ft.items()},
-            "n_giocatori": len(series), "n_osservazioni": int(n_obs)}
-        print(f"  ruolo {role}: mezza vita {bh:g} partite, ristringimento {bK:g} (errore {grid[(bh, bK)]:.4f} contro "
-              f"{grid[(10, 6)]:.4f} con i valori attuali, {out['roles'][role]['miglioramento_pct']:+.1f}%)")
+            "n_giocatori": len(series), "n_osservazioni": int(n_obs),
+            "selezione": "1-SE (prudente): tra le combinazioni quasi equivalenti, la piu' stabile"}
+        print(f"  ruolo {role}: mezza vita {bh:g} partite, ristringimento {bK:g} (regola 1-SE; errore {mse_best:.4f} contro "
+              f"{mse_default:.4f} con i valori attuali, {out['roles'][role]['miglioramento_pct']:+.1f}%)")
         print(f"     forma recente (ultime 5 - media pesata): xGI coefficiente {c:+.2f} (z={z:+.1f}) -> "
               f"{'uso ' + str(beta) if beta else 'nessun peso aggiuntivo'}; tiri z={ft.get('shots', {}).get('z', 0):+.1f}, "
               f"passaggi chiave z={ft.get('kp', {}).get('z', 0):+.1f}")
@@ -793,6 +811,16 @@ def _trend_text(t):
         return ""
     txt = f"forma {t['arrow']}: xGI/90 {t['r']:.2f} (ultime 5) vs {t['b']:.2f} (30 prima), z {t['z']:+.1f}"
     return txt + (f", {t['mnote']}" if t["mnote"] else "")
+
+
+def reliability_label(eff90):
+    """Quanto ci si puo' fidare della stima MEDIA del giocatore (non del singolo voto: quello resta comunque
+    incerto, un episodio vale 1-3 fantavoto)."""
+    if eff90 < 2:
+        return "Bassa"
+    if eff90 < 6:
+        return "Media"
+    return "Alta"
 
 
 def fv_ref(role, pr, lg):
@@ -1049,13 +1077,23 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
                     "p_start": 0.0, "p_sub": 0.0, "exp_min": 60.0, "n_matches": 0}
             nota = "nessun dato Understat: usa lo slider"
         else:
-            pm = prov.player_matches(hit.id)
-            if backtest:
-                pm = [x for x in pm if str(x["date"])[:10] < cutoff.strftime("%Y-%m-%d")]
-            prof = player_profile(pm, team, hist, role, priors, cards_all.loc[hit.id].to_dict()
-                                  if hit.id in cards_all.index else None, tune)
-            nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
-                    "pochi dati" if prof["n_matches"] < 5 else "")
+            try:
+                pm = prov.player_matches(hit.id)
+                if backtest:
+                    pm = [x for x in pm if str(x["date"])[:10] < cutoff.strftime("%Y-%m-%d")]
+                prof = player_profile(pm, team, hist, role, priors, cards_all.loc[hit.id].to_dict()
+                                      if hit.id in cards_all.index else None, tune)
+                nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
+                        "affidabilit\u00e0 bassa" if reliability_label(prof["eff90"]) == "Bassa" else "")
+            except Exception as e:  # noqa: BLE001
+                # un problema di rete/dati su UN giocatore non deve fermare tutti gli altri: ripiego
+                # sulla media del ruolo per lui soltanto, e lo segnalo chiaramente.
+                print(f"  ! {r.nome}: dati non disponibili ({type(e).__name__}: {e}), uso la media del ruolo")
+                pr = priors[role]
+                prof = {"xg90": pr["xG"], "xa90": pr["xA"], "bu90": pr["xGBuildup"], "z_bu": 0.0,
+                        "yc90": pr["yellow_cards"], "rc90": pr["red_cards"],
+                        "p_start": 0.0, "p_sub": 0.0, "exp_min": 60.0, "n_matches": 0}
+                nota = "dati temporaneamente non disponibili: usa lo slider"
         if inj_list:
             e = find_injury([r.nome] + ([override] if override else []), team, inj_list)
             if e:
@@ -1089,6 +1127,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             "KO": raw_dt.replace(" ", "T") + "Z",
             "Trend": (prof.get("trend") or {}).get("arrow", ""),
             "TrendTxt": _trend_text(prof.get("trend")),
+            "Affidabilita": reliability_label(prof.get("eff90", 0.0)),
+            "Eff90": round(prof.get("eff90", 0.0), 1),
             "Nota": nota,
         })
     if problems:
@@ -1337,7 +1377,25 @@ def read_voti(path):
         rows.append({"giornata": g, "Giocatore": p[0], "Reale": fv, "Sched": p[3].strip().upper() if len(p) > 3 else ""})
     if bad:
         print(f"  ! {bad} righe di {path} ignorate: manca il numero di giornata ('# giornata: N')")
-    return pd.DataFrame(rows, columns=["giornata", "Giocatore", "Reale", "Sched"])
+    df = pd.DataFrame(rows, columns=["giornata", "Giocatore", "Reale", "Sched"])
+    _check_voti_sanity(df, path)
+    return df
+
+
+def _check_voti_sanity(df, path):
+    """Solo un avviso, non blocca nulla: un fantavoto medio fuori dal plausibile di solito significa
+    una colonna sbagliata (per esempio voto al posto di fantavoto) o un problema di virgola/punto."""
+    sub = df.dropna(subset=["Reale"])
+    if sub.empty:
+        return
+    for g, gr in sub.groupby("giornata"):
+        m = gr.Reale.mean()
+        if m < 3.0 or m > 9.0:
+            print(f"  ! {path}, giornata {g}: fantavoto medio {m:.1f}, sembra fuori norma (atteso 5-7 circa). "
+                  f"Controlla di aver messo il FANTAVOTO (non il voto) nella terza colonna, e il punto decimale.")
+        extreme = gr[(gr.Reale < 0) | (gr.Reale > 15)]
+        for r in extreme.itertuples():
+            print(f"  ! {path}, giornata {g}: {r.Giocatore} ha fantavoto {r.Reale}, valore implausibile: controlla la riga.")
 
 
 def _team_points(xi, bench, fv, role):
@@ -1464,7 +1522,7 @@ def _calibra_votes(storico_dir, voti_path, out_json, lookup=None):
             rep["n_sub"] = int(len(sub))
             rep["mae_modello_sub"] = float(sub.err.abs().mean())
             rep["mae_media_giocatore"] = float((sub.Reale - loo).abs().mean())
-        cs = []
+        cs, rep["pendenza"] = [], {}
         for role, gr in df.groupby("Ruolo"):
             n = len(gr)
             bias = float(gr.err.mean())
@@ -1473,7 +1531,19 @@ def _calibra_votes(storico_dir, voti_path, out_json, lookup=None):
                 out["offset"][role] = round(-bias * n / (n + CFG["calib_shrink"]), 3)
             if n >= 5:
                 cs.append(gr["FV_raw"].rank().corr(gr["Reale"].rank()))
+            # SOLO diagnostico: pendenza di Reale contro FV_raw. 1 = va bene (schiaccio/esagero nella stessa
+            # misura di quanto succede davvero); <1 = il modello esagera le differenze tra i giocatori,
+            # >1 = le appiattisce troppo. Non lo applico come correzione: con questi numeri di osservazioni
+            # per ruolo, stimare ANCHE la pendenza (oltre alla media) rischierebbe di inseguire il rumore.
+            if n >= CFG["calib_min_obs"] * 2:
+                x, y = gr["FV_raw"].to_numpy(), gr["Reale"].to_numpy()
+                xm, den = x.mean(), ((x - x.mean()) ** 2).sum()
+                if den > 1e-9:
+                    rep["pendenza"][role] = round(float(((x - xm) * (y - y.mean())).sum() / den), 2)
         rep["spearman_ruolo"] = float(np.nanmean(cs)) if cs else None
+        if rep["pendenza"]:
+            print(f"  pendenza reale~previsto per ruolo (diagnostico, non applicato: 1 = ok, <1 = il modello "
+                  f"esagera le differenze tra i giocatori, >1 = le appiattisce): {rep['pendenza']}")
     # effetto risultato: quanto il voto residuo (reale - previsto) dipende da vittoria/pareggio/sconfitta effettivi.
     # Usa tutte le giornate, con gli scarti calcolati rispetto alla media del ruolo (quindi il rodaggio non lo distorce).
     if lookup is not None and "Squadra" in df_all.columns:
@@ -1920,7 +1990,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <div id="roster"></div>
 <p class="s" id="ver"></p>
 <p class="s" id="beta"></p>
-<p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Modello statistico, non una garanzia.</p>
+<p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Affidabilit&agrave; = quanti minuti recenti (pesati) sostengono la stima del suo rendimento medio, non quanto sar&agrave; prevedibile il voto di QUESTA giornata: anche con affidabilit&agrave; alta un singolo episodio (gol, rosso, infortunio) pu&ograve; spostare il fantavoto di diversi punti. Modello statistico, non una garanzia.</p>
 <script>
 const D = __DATA__;
 const KEY = "fanta_v2_" + D.giornata;
@@ -2009,7 +2079,8 @@ function build(){
     r.appendChild(mk("div","info", s.Avversario + " (" + s.Data + ") \u00b7 gol " + s.P_gol + "% \u00b7 assist " + s.P_ass + "%" +
       (s["CS%"] != null ? " \u00b7 clean sheet " + s["CS%"] + "%" : "") + (s.TrendTxt ? " \u00b7 " + s.TrendTxt : "")));
     r.appendChild(mk("div","info2", "fantavoto " + s.Fantavoto.toFixed(2) + " \u00b7 squadra " + s.GolSq.toFixed(1) + " gol attesi, avversario " + s.GolOpp.toFixed(1) +
-      " (" + s.Fonte + ") \u00b7 risultato: V " + s.P_V + "% N " + s.P_N + "% P " + s.P_S + "%" + (s.Nota ? " \u00b7 " + s.Nota : "")));
+      " (" + s.Fonte + ") \u00b7 risultato: V " + s.P_V + "% N " + s.P_N + "% P " + s.P_S + "%" +
+      " \u00b7 affidabilit\u00e0 " + s.Affidabilita + (s.Nota ? " \u00b7 " + s.Nota : "")));
     const c = mk("div","ctl"), sl = mk("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.step = 5; sl.value = s.p;
     sl.addEventListener("input", () => { s.p = +sl.value; save(); update(); });
     const pv = mk("span","pv"); const lb = mk("label","o"), cb = mk("input"); cb.type = "checkbox"; cb.checked = !s.disp;
@@ -2299,6 +2370,83 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None, stat
     return HTML_TEMPLATE.replace("__DATA__", data)
 
 
+def load_roster(path):
+    """Legge rosa.csv con controlli chiari: meglio un messaggio comprensibile che un traceback."""
+    if not Path(path).exists():
+        sys.exit(f"Non trovo il file della rosa: {path}\n"
+                 f"Controlla il nome/percorso, oppure passalo con --rosa.")
+    try:
+        roster = pd.read_csv(path)
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"Non riesco a leggere {path} come CSV ({type(e).__name__}: {e}).\n"
+                 f"Aprilo e controlla che sia salvato come CSV, con la virgola come separatore.")
+    required = {"nome", "squadra", "ruolo"}
+    missing = required - set(roster.columns)
+    if missing:
+        sys.exit(f"A {path} mancano le colonne: {', '.join(sorted(missing))}.\n"
+                 f"La prima riga deve essere: nome,squadra,ruolo,mantra,understat,disponibile")
+    roster = roster.dropna(subset=["nome", "squadra", "ruolo"])
+    if roster.empty:
+        sys.exit(f"{path} non contiene nessuna riga valida (nome/squadra/ruolo compilati).")
+    bad_role = sorted(set(roster.ruolo.astype(str).str.strip().str.upper().str[0]) - set("PDCA"))
+    if bad_role:
+        sys.exit(f"In {path} il ruolo deve iniziare per P, D, C o A. Valori non riconosciuti: {', '.join(bad_role)}")
+    return roster
+
+
+def selftest():
+    """Controllo veloce, senza rete: verifica che le parti principali dello script funzionino ancora dopo
+    una modifica, prima di spendere minuti a scaricare dati. Se fallisce, il problema e' nel codice."""
+    errs = []
+
+    def check(name, cond):
+        if not cond:
+            errs.append(name)
+
+    check("CFG ruoli completi", set(CFG["clean_sheet"]) == set("PDCA"))
+    w = decay(5, 3)
+    check("decay() decrescente e pari a 1 sull'ultima", len(w) == 5 and w[-1] == 1.0 and all(np.diff(w) > 0))
+    pv, pn, ps = outcome_probs(1.3, 1.1)
+    check("outcome_probs somma a 1", abs(pv + pn + ps - 1.0) < 1e-6)
+    pr = {"xG": 0.3, "xA": 0.15, "yellow_cards": 0.2, "red_cards": 0.02}
+    ref = fv_ref("A", pr, 1.3)
+    check("fv_ref() finito", np.isfinite(ref))
+    prof = {"xg90": 0.3, "xa90": 0.1, "bu90": 0.3, "z_bu": 0.0, "yc90": 0.1, "rc90": 0.01,
+            "p_start": 0.8, "p_sub": 0.1, "exp_min": 80.0, "n_matches": 10}
+    ctx = {"att_factor": 1.0, "lam_for": 1.3, "lam_conc": 1.2, "src": "xG", "pv": 0.4, "pn": 0.3, "ps": 0.3}
+    pj = project("A", prof, ctx, ref)
+    check("project() voto in [1,10]", 1 <= pj["rating"] <= 10)
+    check("resolve_team trova il nome esatto", resolve_team("Milan", ["Milan", "Roma"]) == "Milan")
+    S = {"Milan": {"A": 1.2, "D": 0.9}, "Roma": {"A": 1.0, "D": 1.0}}
+    tc = team_ctx("Milan", "Roma", True, S, 1.3, 1.1, 0.9)
+    check("team_ctx produce numeri finiti", all(np.isfinite(v) for v in (tc["lam_for"], tc["lam_conc"])))
+    check("HTML_TEMPLATE ha il segnaposto", "__DATA__" in HTML_TEMPLATE)
+    df = pd.DataFrame([{"Giocatore": "Test", "Ruolo": "A", "Squadra": "Milan", "Disp": True, "Avversario": "vs Roma",
+                        "Data": "01/01", "xG": 0.3, "xA": 0.1, "P_gol": 30, "P_ass": 10, "CS%": None, "Titolare%": 90,
+                        "Fantavoto": 7.0, "FV_raw": 7.0, "Voto": 7.0, "EV": 6.9, "Rif": 6.3, "GolSq": 1.5, "GolOpp": 1.2,
+                        "Fonte": "xG", "Res": 0.1, "P_V": 40, "P_N": 30, "P_S": 30, "KO": "2026-01-01T15:00:00Z",
+                        "Trend": "", "TrendTxt": "", "Affidabilita": "Alta", "Eff90": 8.0, "Nota": ""}])
+    fixtures = [{"datetime": "2026-01-01 15:00:00"}]
+    try:
+        html = to_html(df, fixtures, datetime.now(), MODULES, [], {"rno": 1, "baseline": []}, None, {}, [])
+        check("to_html() produce una pagina non vuota", len(html) > 2000 and "__DATA__" not in html)
+    except Exception as e:  # noqa: BLE001
+        errs.append(f"to_html() ha sollevato un errore: {type(e).__name__}: {e}")
+    try:
+        rep, err = market_report(pd.DataFrame(columns=["id", "player_name", "team_title", "position", "time",
+                                                        "xG", "xA", "xGBuildup", "yellow_cards", "red_cards",
+                                                        "goals", "assists"]), {}, pd.DataFrame(columns=["nome", "squadra"]), [])
+        check("market_report() gestisce una rosa vuota senza errori", err is not None or rep is not None)
+    except Exception as e:  # noqa: BLE001
+        errs.append(f"market_report() ha sollevato un errore: {type(e).__name__}: {e}")
+    if errs:
+        print("SELFTEST FALLITO:")
+        for e in errs:
+            print("  -", e)
+        sys.exit(1)
+    print(f"Selftest OK ({datetime.now():%Y-%m-%d %H:%M})")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Previsione voti fantacalcio Serie A (xG/xA + avversario + quote)")
     ap.add_argument("--rosa", default="rosa.csv")
@@ -2308,6 +2456,7 @@ def main(argv=None):
     ap.add_argument("--calib", default="calibrazione.json")
     ap.add_argument("--tuning", default="tuning.json", help="parametri misurati dalla taratura")
     ap.add_argument("--mercato", action="store_true", help="analisi di mercato (occasioni vs gol reali) ed esci")
+    ap.add_argument("--selftest", action="store_true", help="controllo veloce senza rete ed esci")
     ap.add_argument("--taratura", action="store_true", help="misura sui dati di tutta la Serie A quanto pesare il passato ed esci")
     ap.add_argument("--statistiche", default="statistiche", help="cartella col file statistiche di Fantacalcio.it (xlsx)")
     ap.add_argument("--formazioni", default="formazioni", help="cartella con i testi copiati da Fantacalcio.it")
@@ -2325,7 +2474,7 @@ def main(argv=None):
     if a.mercato:
         n_ = datetime.now(ZoneInfo(CFG["tz"]))
         season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
-        roster = pd.read_csv(a.rosa)
+        roster = load_roster(a.rosa)
         prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
         pcur = num(pd.DataFrame(prov.players(season)), ["time", "xG", "xA", "xGBuildup", "yellow_cards", "red_cards", "goals", "assists", "npg", "npxG"])
         pold = num(pd.DataFrame(prov.players(season - 1)), ["time", "xG", "xA", "xGBuildup", "yellow_cards", "red_cards"])
@@ -2353,6 +2502,9 @@ def main(argv=None):
         (out / "mercato.html").write_text(to_html_mercato(report, err, season, n_.replace(tzinfo=None)), encoding="utf-8")
         print(f"Analisi di mercato scritta in {out}/mercato.html")
         return
+    if a.selftest:
+        selftest()
+        return
     if a.taratura:
         n_ = datetime.now(ZoneInfo(CFG["tz"]))
         season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
@@ -2364,7 +2516,7 @@ def main(argv=None):
         try:
             n_ = datetime.now(ZoneInfo(CFG["tz"]))
             season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
-            roster = pd.read_csv(a.rosa)
+            roster = load_roster(a.rosa)
             prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
         except Exception as e:  # noqa: BLE001
             prov = None
@@ -2374,7 +2526,7 @@ def main(argv=None):
 
     now = datetime.now(ZoneInfo(CFG["tz"])).replace(tzinfo=None)      # ora italiana
     season = a.season or (now.year if now.month >= 7 else now.year - 1)
-    roster = pd.read_csv(a.rosa)
+    roster = load_roster(a.rosa)
     prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
     modules = [m.strip() for m in a.moduli.split(",")]
     calib = None
