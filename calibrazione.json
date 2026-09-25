@@ -1,5 +1,5 @@
 {
- "aggiornato": "2026-09-25 12:39",
+ "aggiornato": "2026-09-25 18:22",
  "offset": {
   "P": 0.088,
   "D": -0.038,
@@ -34,6 +34,11 @@
   "n_sub": 52,
   "mae_modello_sub": 1.1456153846153847,
   "mae_media_giocatore": 1.3846153846153846,
+  "pendenza": {
+   "A": 4.62,
+   "C": 1.84,
+   "D": 2.77
+  },
   "spearman_ruolo": 0.3644318917327561,
   "result_beta_ols": 0.516,
   "result_n": 91
