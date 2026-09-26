@@ -2,20 +2,20 @@ Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
 Maignan,P,Milan,@ Sassuolo,4.835,4.99,100,4.99,True,0.174
 Falcone,P,Lecce,vs Bologna,4.503,4.51,100,4.51,True,-0.223
 Torriani,P,Milan,@ Sassuolo,4.863,5.02,0,4.69,True,0.174
-Mancini,D,Roma,@ Como,6.314,6.27,100,6.27,True,-0.014
-Ramon,D,Como,vs Roma,6.544,6.51,100,6.51,True,0.014
+Mancini,D,Roma,@ Como,6.313,6.27,100,6.27,True,-0.019
+Ramon,D,Como,vs Roma,6.548,6.52,100,6.52,True,0.019
 Lucumì,D,Juventus,@ Cagliari,6.276,6.4,67,6.35,True,0.425
-Wesley,D,Roma,@ Como,6.331,6.29,70,6.28,True,-0.014
+Wesley,D,Roma,@ Como,6.33,6.29,70,6.28,True,-0.019
 Miranda J.,D,Bologna,@ Lecce,6.437,6.48,76,6.43,True,0.223
 Diego Carlos,D,Parma,@ Inter,6.11,5.79,56,6.0,True,-0.749
 Badiashile,D,Napoli,vs Frosinone,6.264,6.39,10,6.27,True,0.449
 Gabbia,D,Milan,@ Sassuolo,6.242,6.27,19,6.26,True,0.174
 Conceicao,C,Juventus,@ Cagliari,6.91,7.37,100,7.37,True,0.425
 Alajbegovic,C,Juventus,@ Cagliari,6.196,6.65,69,6.65,True,0.425
-Cristante,C,Roma,@ Como,6.265,6.56,100,6.56,True,-0.014
+Cristante,C,Roma,@ Como,6.265,6.56,100,6.56,True,-0.019
 Lobotka,C,Napoli,vs Frosinone,6.248,6.71,95,6.71,True,0.449
 Pulisic,C,Milan,@ Sassuolo,6.976,7.34,40,6.93,True,0.174
-Liberali,C,Como,vs Roma,6.037,6.34,12,6.62,True,0.014
+Liberali,C,Como,vs Roma,6.038,6.34,12,6.62,True,0.019
 Bernabè,C,Parma,@ Inter,6.12,6.14,33,6.48,True,-0.749
 Orsolini,C,Bologna,@ Lecce,6.391,6.77,27,6.69,False,0.223
 Laurientè,A,Sassuolo,vs AC Milan,6.691,6.8,100,6.8,True,-0.174
