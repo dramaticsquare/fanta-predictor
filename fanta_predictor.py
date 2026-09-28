@@ -81,6 +81,13 @@ CFG = {
     "mercato_min_frac": 0.55,     # ...prima, la soglia e' questa frazione dei minuti disponibili fino ad oggi
     "mercato_search_min": 45,     # minuti minimi per comparire nella ricerca (piu' basso: solo per escludere chi non ha mai giocato)
     "h2h_scale": 9.0,             # [EURISTICA] scarto tipico tra due formazioni: usato per stimare la probabilita' di vittoria
+    "lineup_margin_threshold": 0.3,  # [EURISTICA] sotto questo scarto di valore atteso, due giocatori si segnalano come "in bilico"
+    # voto "alla giornalista" (base ~6, piu' alto se segna/assiste) usato solo nella spiegazione in linguaggio semplice.
+    # [EURISTICA, valori tipici noti del fantacalcio]: non ancora calcolato dai tuoi voti reali (pochi dati per ora),
+    # anche se voti_reali.csv contiene gia' la colonna del voto giornalista (oggi non usata) per farlo in futuro.
+    "journalist_voto_base": 6.0,
+    "journalist_voto_goal": 7.3,
+    "journalist_voto_assist": 6.7,
     "mercato_luck_soglia": 0.30,  # scarto minimo (in fantavoto/90) tra reale e atteso per segnalare un giocatore
     # effetto risultato: chi vince prende voti un po' piu' alti. beta = fantavoto per unita' di (P(vittoria) - P(sconfitta)).
     # Parte da un valore prudente [EURISTICA] e viene stimato sui tuoi voti reali (con shrink verso questo valore)
@@ -823,6 +830,46 @@ def reliability_label(eff90):
     return "Alta"
 
 
+def spiega_voto(pj, role, ref, mercato=None):
+    """Frase in linguaggio semplice, in due parti: (1) il VOTO che vedi sul pallino (scala 1-10 del modello,
+    gia' amplificata per far risaltare le differenze) nei due scenari piu' probabili; (2) lo stesso ragionamento
+    "alla giornalista" (voto vicino a 6, un po' piu' alto se segna/assiste, + il bonus fisso +3/+1)."""
+    base_fv = pj["fv_raw"] - CFG["goal"] * pj["e_g"] - CFG["assist"] * pj["e_a"]
+    p_gol = 1 - math.exp(-pj["e_g"])
+    p_ass = 1 - math.exp(-pj["e_a"])
+
+    def to_voto(fv):
+        return float(np.clip(CFG["rating_center"] + CFG["rating_slope"] * (fv - ref), 1, 10))
+
+    v0 = to_voto(base_fv)
+    txt = f"Sulla scala del pallino colorato (1-10): base senza bonus ~{v0:.1f}."
+    if p_gol >= 0.03:
+        txt += f" Con un gol ({round(100*p_gol)}%): ~{to_voto(base_fv + CFG['goal']):.1f}."
+    if p_ass >= 0.03 and role != "P":
+        txt += f" Con un assist ({round(100*p_ass)}%): ~{to_voto(base_fv + CFG['assist']):.1f}."
+    txt += (" Il voto previsto che vedi \u00e8 la media pesata tra questi scenari (e altri pi\u00f9 rari)."
+            " Se preferisci pensare come un giornalista (voto vicino a 6, un po\u2019 pi\u00f9 alto se segna o assiste,"
+            f" + il bonus fisso della regola): senza bonus ~{CFG['journalist_voto_base']:.1f}.")
+    if p_gol >= 0.03:
+        txt += (f" Con un gol: voto giornalista ~{CFG['journalist_voto_goal']:.1f} + bonus +3 "
+                f"= fantavoto ~{CFG['journalist_voto_goal'] + 3:.1f}.")
+    if p_ass >= 0.03 and role != "P":
+        txt += (f" Con un assist: voto ~{CFG['journalist_voto_assist']:.1f} + bonus +1 "
+                f"= fantavoto ~{CFG['journalist_voto_assist'] + 1:.1f}.")
+    txt += " (Questi ultimi numeri sono una stima di massima, basata su pattern tipici, non ancora calcolata dai tuoi voti reali.)"
+    if mercato and mercato.get("Affidabile"):
+        f = mercato["Fortuna"]
+        if f <= -CFG["mercato_luck_soglia"]:
+            txt += (f" Guardando tutta la stagione (pagina Mercato): finora \u00e8 stato sfortunato, le sue occasioni "
+                    f"valgono pi\u00f9 dei gol/assist reali \u2014 un motivo in pi\u00f9 per non scartarlo su una brutta giornata.")
+        elif f >= CFG["mercato_luck_soglia"]:
+            txt += (f" Guardando tutta la stagione (pagina Mercato): finora ha reso sopra le sue occasioni "
+                    f"\u2014 goditi il rendimento, ma non stupirti se cala.")
+        if mercato.get("Rigorista"):
+            txt += " Risulta rigorista di questa stagione."
+    return txt
+
+
 def fv_ref(role, pr, lg):
     """Fantavoto di un giocatore MEDIO del ruolo in una partita neutra (definisce il '6' del voto previsto)."""
     fv = CFG["base_vote"] + CFG["goal"] * pr["xG"] + CFG["assist"] * pr["xA"]
@@ -978,7 +1025,7 @@ def build_reminders(status, rno, now, kickoff):
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
         odds_events=None, calib=None, odds_note=None, inj_key=None,
-        inj_site="api-football.com", tune=None):
+        inj_site="api-football.com", tune=None, mercato_summary=None):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
     matches_all = prov.matches(season)
@@ -1129,6 +1176,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             "TrendTxt": _trend_text(prof.get("trend")),
             "Affidabilita": reliability_label(prof.get("eff90", 0.0)),
             "Eff90": round(prof.get("eff90", 0.0), 1),
+            "SpiegaVoto": spiega_voto(pj, role, refs[role] + off.get(role, 0.0),
+                                      (mercato_summary or {}).get(str(hit.id)) if hit is not None else None),
             "Nota": nota,
         })
     if problems:
@@ -1941,7 +1990,7 @@ h1{font-size:20px;margin:12px 0 2px}h2{font-size:15px;margin:18px 0 8px}.s{color
 .mini div{font-size:12.5px;line-height:1.4}.mini i{font-style:normal;font-weight:700;color:var(--acc);margin-right:4px}
 .card{background:var(--card);border-radius:12px;padding:10px 12px;margin-bottom:10px}
 .ln{display:flex;gap:8px;align-items:baseline;padding:4px 0;font-size:14px;flex-wrap:wrap}
-.ln b{min-width:16px}.tap{cursor:pointer;border-radius:8px;padding:6px 4px}.tap:active{background:var(--line)}.tag{font-size:12px;color:var(--mut)}
+.ln b{min-width:16px}.tap{cursor:pointer;border-radius:8px;padding:6px 4px}.tap:active{background:var(--line)}.margin{flex-basis:100%;font-size:11.5px;color:#d97706;margin-top:2px}.tag{font-size:12px;color:var(--mut)}
 .row{background:var(--card);border-radius:12px;padding:9px 12px;margin-bottom:8px;border-left:4px solid transparent}
 .row.in{border-left-color:#16a34a}.row.out{opacity:.5}
 .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -1950,7 +1999,7 @@ h1{font-size:20px;margin:12px 0 2px}h2{font-size:15px;margin:18px 0 8px}.s{color
 .info{font-size:12px;color:var(--mut);margin:3px 0 0}.info2{font-size:12px;color:var(--mut);margin:0 0 6px}
 .ctl{display:flex;align-items:center;gap:10px}
 input[type=range]{flex:1;accent-color:var(--acc)}
-.pv{font-size:13px;min-width:74px;text-align:right}.chg{color:var(--acc);font-weight:600}
+.pv{font-size:13px;min-width:74px;text-align:right}.chg{color:var(--acc);font-weight:600}.ibtn{background:none;border:none;color:var(--mut);font-size:15px;cursor:pointer;padding:0 0 0 4px;line-height:1;vertical-align:middle}.spiega{display:none;font-size:12.5px;color:var(--mut);background:var(--line);border-radius:6px;padding:6px 8px;margin:2px 0 6px}
 label.o{font-size:12px;white-space:nowrap}
 button,select{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:7px 11px;font-size:13px}
 select{background:var(--card);color:var(--fg);border:1px solid var(--line)}
@@ -1961,8 +2010,19 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <div class="s" id="meta"></div>
 <div id="remind" class="card" style="display:none;border-left:3px solid #d97706"></div>
 <details class="card" id="statusdet"><summary>Stato dei dati</summary><div id="statuscard" class="s" style="margin-top:6px"></div></details>
+<details class="card" id="howdet"><summary>Come uso questa pagina per scegliere</summary>
+  <div class="s" style="margin-top:6px">
+  <b>1.</b> Parto dalla formazione automatica: &egrave; gi&agrave; la sintesi di tutti i segnali disponibili.<br>
+  <b>2.</b> Se un giocatore ha la nota &#9878;&#65039; "in bilico", il distacco &egrave; dentro il rumore: non conta come una vera preferenza del modello.<br>
+  <b>3.</b> In quei casi guardo l'Affidabilit&agrave; prima di tutto: a parit&agrave; di voto, preferisco la stima pi&ugrave; solida.<br>
+  <b>4.</b> Controllo se i segnali vanno nella stessa direzione (percentuale gol, freccia di forma, ⓘ con il dato del Mercato): se sono in contraddizione, la situazione &egrave; incerta davvero, non solo il numero &egrave; vicino.<br>
+  <b>5.</b> Le probabili formazioni incollate di fresco contano pi&ugrave; della storia di stagione per il SE gioca; la storia conta di pi&ugrave; per il QUANTO rende.<br>
+  <b>6.</b> Solo tra due giocatori quasi identici guardo il rischio: pi&ugrave; probabilit&agrave; di gol se rincorro punti, pi&ugrave; stabilit&agrave; se difendo un vantaggio (come nel testa a testa quando sono sfavorito).<br>
+  <b>7.</b> Non giudico il metodo da una sola giornata: guardo la Pagella su pi&ugrave; turni insieme.
+  </div>
+</details>
 <details class="card" id="h2hdet"><summary>Testa a testa</summary>
-  <div class="s" style="margin:6px 0">Incolla gli 11 nomi della formazione avversaria (uno per riga, va bene copiarli cos\u00ec come sono nell\u2019app): stimo il punteggio di entrambe e la probabilit\u00e0 di vincere. Per i tuoi uso la previsione precisa della giornata; per i suoi solo una stima di massima basata sulla stagione, senza sapere se schiera davvero questi titolari.</div>
+  <div class="s" style="margin:6px 0">Incolla gli 11 nomi della formazione avversaria (uno per riga, va bene copiarli cos&igrave; come sono nell&rsquo;app): stimo il punteggio di entrambe e la probabilit&agrave; di vincere. Per i tuoi uso la previsione precisa della giornata; per i suoi solo una stima di massima basata sulla stagione, senza sapere se schiera davvero questi titolari.</div>
   <textarea id="oppo" rows="6" placeholder="Es.\nDi Gregorio\nBremer\nKalulu\n..."></textarea>
   <div class="bh" style="margin-top:6px"><button id="h2hcalc">Calcola</button></div><div id="h2hout"></div>
 </details>
@@ -2009,7 +2069,7 @@ function calc(mods, useForce){
   let best = null;
   for (const mod of mods){
     const [d,c,a] = mod.split("-").map(Number), need = {P:1, D:d, C:c, A:a};
-    let tot = 0, pick = [], ok = true;
+    let tot = 0, pick = [], ok = true, margins = [];
     for (const r of ["P","D","C","A"]){
       const fin = useForce ? S.filter(s => s.Ruolo === r && s.force === 1) : [];          // scelte fisse: giocano comunque
       if (fin.length > need[r]) { ok = false; break; }
@@ -2017,9 +2077,13 @@ function calc(mods, useForce){
       const gok = g.filter(s => s.p >= D.minp*100), left = need[r] - fin.length;
       g = (gok.length >= left ? gok : g).sort((x,y) => ev(y) - ev(x));
       if (g.length < left) { ok = false; break; }
+      if (left > 0 && g.length > left) {                       // c'e' un'alternativa: quanto e' vicina?
+        const inP = g[left - 1], outP = g[left], diff = ev(inP) - ev(outP);
+        if (diff < D.marginTh) margins.push({role: r, inP, outP, diff});
+      }
       const t = fin.concat(g.slice(0, left)); pick.push(...t); tot += t.reduce((q,s) => q + ev(s), 0);
     }
-    if (ok && (!best || tot > best.tot)) best = {mod, tot, pick};
+    if (ok && (!best || tot > best.tot)) best = {mod, tot, pick, margins};
   }
   return best;
 }
@@ -2032,9 +2096,25 @@ function bestLineup(){
   return calc(D.modules, false);
 }
 function mk(tag, cls, txt){ const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
-function line(s, where){
+const relRank = lab => ({Bassa: 0, Media: 1, Alta: 2})[lab] ?? 1;
+function marginNotes(b){
+  const map = new Map();
+  (b && b.margins || []).forEach(m => {
+    let pref = "";
+    if (m.inP.Affidabilita !== m.outP.Affidabilita) {
+      pref = relRank(m.inP.Affidabilita) >= relRank(m.outP.Affidabilita)
+        ? " \u2014 affidabilit\u00e0 di " + m.inP.Giocatore + " pi\u00f9 alta: scelta ragionevole."
+        : " \u2014 " + m.outP.Giocatore + " ha affidabilit\u00e0 pi\u00f9 alta: potresti preferire lui.";
+    }
+    map.set(m.inP.Giocatore, "\u2696\ufe0f In bilico con " + m.outP.Giocatore + " (differenza solo " + m.diff.toFixed(2) + " di valore atteso)" + pref);
+    map.set(m.outP.Giocatore, "\u2696\ufe0f Alternativa quasi equivalente a " + m.inP.Giocatore + " (differenza solo " + m.diff.toFixed(2) + ")" + pref);
+  });
+  return map;
+}
+function line(s, where, mnotes){
   const l = mk("div","ln tap"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",(s.force ? "\ud83d\udd12 " : "") + s.Giocatore + (s.Trend ? " " + s.Trend : "")));
   l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%" + (s.KO && Date.parse(s.KO) <= Date.now() ? " \u00b7 partita iniziata" : "") + (s.force === -1 ? " \u00b7 tua scelta: panchina" : s.force === 1 ? " \u00b7 tua scelta: titolare" : "")));
+  if (mnotes && mnotes.has(s.Giocatore)) { const w = mk("div","margin", mnotes.get(s.Giocatore)); l.appendChild(w); }
   l.addEventListener("click", () => {
     if (s.force) s.force = 0; else s.force = (where === "xi") ? -1 : 1;              // titolare -> panchina, panchinaro -> titolare, tocca ancora = automatico
     save(); update(); });
@@ -2046,14 +2126,15 @@ function update(){
   const L = document.getElementById("lineup"), B = document.getElementById("bench"), M = document.getElementById("mini"), W = document.getElementById("warn");
   L.textContent = ""; B.textContent = ""; M.textContent = ""; inSet = new Set();
   W.textContent = warnMsg; W.style.display = warnMsg ? "block" : "none";
+  const mnotes = marginNotes(b);
   if (!b) { L.textContent = "Nessun modulo valido con i giocatori disponibili."; document.getElementById("lt").textContent = "Formazione non disponibile"; }
   else {
     document.getElementById("lt").textContent = b.mod + " \u00b7 atteso " + b.tot.toFixed(1);
     ["P","D","C","A"].forEach(r => { const g = byRole(b, r), d = mk("div"); d.appendChild(mk("i",null,r));
       d.appendChild(document.createTextNode(g.map(s => s.Giocatore + (s.force === 1 ? "*" : "")).join(" \u00b7 "))); M.appendChild(d);
-      g.forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s, "xi")); }); });
+      g.forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s, "xi", mnotes)); }); });
   }
-  S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((x,y) => ev(y)-ev(x)).forEach(s => B.appendChild(line(s, "bn")));
+  S.filter(s => s.disp && !inSet.has(s.Giocatore)).sort((x,y) => ev(y)-ev(x)).forEach(s => B.appendChild(line(s, "bn", mnotes)));
   document.querySelectorAll(".row").forEach(r => { const s = S[+r.dataset.i];
     r.classList.toggle("in", inSet.has(s.Giocatore)); r.classList.toggle("out", !s.disp);
     const pv = r.querySelector(".pv"); pv.textContent = s.p + "%" + (s.p !== s.p0 ? " (modello " + s.p0 + "%)" : "");
@@ -2075,12 +2156,15 @@ function build(){
   const R = document.getElementById("roster"); R.textContent = "";
   D.order.forEach(i => { const s = S[i], r = mk("div","row"); r.dataset.i = i;
     const t = mk("div","top"), left = mk("div"); left.appendChild(mk("span","r",s.Ruolo)); left.appendChild(mk("span","nm",s.Giocatore + (s.Trend ? " " + s.Trend : "")));
-    const bd = mk("div","badge",s.Voto.toFixed(1)); bd.style.background = col(s.Voto); t.appendChild(left); t.appendChild(bd); r.appendChild(t);
+    const ib = mk("button","ibtn","\u24d8"); ib.type = "button"; ib.setAttribute("aria-label", "Come si legge questo voto");
+    ib.addEventListener("click", e => { e.stopPropagation(); const box = r.querySelector(".spiega"); box.style.display = box.style.display === "block" ? "none" : "block"; });
+    const bd = mk("div","badge",s.Voto.toFixed(1)); bd.style.background = col(s.Voto); left.appendChild(ib); t.appendChild(left); t.appendChild(bd); r.appendChild(t);
     r.appendChild(mk("div","info", s.Avversario + " (" + s.Data + ") \u00b7 gol " + s.P_gol + "% \u00b7 assist " + s.P_ass + "%" +
       (s["CS%"] != null ? " \u00b7 clean sheet " + s["CS%"] + "%" : "") + (s.TrendTxt ? " \u00b7 " + s.TrendTxt : "")));
     r.appendChild(mk("div","info2", "fantavoto " + s.Fantavoto.toFixed(2) + " \u00b7 squadra " + s.GolSq.toFixed(1) + " gol attesi, avversario " + s.GolOpp.toFixed(1) +
       " (" + s.Fonte + ") \u00b7 risultato: V " + s.P_V + "% N " + s.P_N + "% P " + s.P_S + "%" +
       " \u00b7 affidabilit\u00e0 " + s.Affidabilita + (s.Nota ? " \u00b7 " + s.Nota : "")));
+    r.appendChild(mk("div","spiega", s.SpiegaVoto));
     const c = mk("div","ctl"), sl = mk("input"); sl.type = "range"; sl.min = 0; sl.max = 100; sl.step = 5; sl.value = s.p;
     sl.addEventListener("input", () => { s.p = +sl.value; save(); update(); });
     const pv = mk("span","pv"); const lb = mk("label","o"), cb = mk("input"); cb.type = "checkbox"; cb.checked = !s.disp;
@@ -2363,6 +2447,7 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None, stat
         "fcmap": (calib or {}).get("fc_map") or [],
         "allPlayers": info.get("baseline", []),
         "h2hScale": CFG["h2h_scale"],
+        "marginTh": CFG["lineup_margin_threshold"],
         "status": status or {},
         "reminders": list(reminders),
     }
@@ -2425,11 +2510,13 @@ def selftest():
                         "Data": "01/01", "xG": 0.3, "xA": 0.1, "P_gol": 30, "P_ass": 10, "CS%": None, "Titolare%": 90,
                         "Fantavoto": 7.0, "FV_raw": 7.0, "Voto": 7.0, "EV": 6.9, "Rif": 6.3, "GolSq": 1.5, "GolOpp": 1.2,
                         "Fonte": "xG", "Res": 0.1, "P_V": 40, "P_N": 30, "P_S": 30, "KO": "2026-01-01T15:00:00Z",
-                        "Trend": "", "TrendTxt": "", "Affidabilita": "Alta", "Eff90": 8.0, "Nota": ""}])
+                        "Trend": "", "TrendTxt": "", "Affidabilita": "Alta", "Eff90": 8.0, "SpiegaVoto": "test", "Nota": ""}])
     fixtures = [{"datetime": "2026-01-01 15:00:00"}]
     try:
         html = to_html(df, fixtures, datetime.now(), MODULES, [], {"rno": 1, "baseline": []}, None, {}, [])
         check("to_html() produce una pagina non vuota", len(html) > 2000 and "__DATA__" not in html)
+        head = html.split("<script>")[0]           # la parte HTML pura: qui gli escape \\uXXXX non vengono interpretati
+        check("nessun escape unicode grezzo nel testo HTML (usa &egrave; ecc.)", not re.search(r"\\u[0-9a-fA-F]{4}", head))
     except Exception as e:  # noqa: BLE001
         errs.append(f"to_html() ha sollevato un errore: {type(e).__name__}: {e}")
     try:
@@ -2456,6 +2543,8 @@ def main(argv=None):
     ap.add_argument("--calib", default="calibrazione.json")
     ap.add_argument("--tuning", default="tuning.json", help="parametri misurati dalla taratura")
     ap.add_argument("--mercato", action="store_true", help="analisi di mercato (occasioni vs gol reali) ed esci")
+    ap.add_argument("--mercato-json", dest="mercato_json", default="mercato.json",
+                    help="riepilogo per giocatore del Mercato, riusato dalla pagina principale")
     ap.add_argument("--selftest", action="store_true", help="controllo veloce senza rete ed esci")
     ap.add_argument("--taratura", action="store_true", help="misura sui dati di tutta la Serie A quanto pesare il passato ed esci")
     ap.add_argument("--statistiche", default="statistiche", help="cartella col file statistiche di Fantacalcio.it (xlsx)")
@@ -2500,6 +2589,10 @@ def main(argv=None):
         out = Path(a.out)
         out.mkdir(parents=True, exist_ok=True)
         (out / "mercato.html").write_text(to_html_mercato(report, err, season, n_.replace(tzinfo=None)), encoding="utf-8")
+        if report:
+            summary = {p["id"]: {"Fortuna": p["Fortuna"], "Rigorista": p["Rigorista"], "Affidabile": p["Affidabile"]}
+                      for p in report.get("_all", [])}
+            Path(a.mercato_json).write_text(json.dumps(summary), encoding="utf-8")
         print(f"Analisi di mercato scritta in {out}/mercato.html")
         return
     if a.selftest:
@@ -2577,8 +2670,15 @@ def main(argv=None):
     inj_site = os.environ.get("API_FOOTBALL_SITE", "api-football.com").strip().lower() or "api-football.com"
     if inj_key:
         print(f"API_FOOTBALL_KEY trovata ({len(inj_key)} caratteri), servizio: {inj_site}")
+    mercato_summary = None
+    if Path(a.mercato_json).exists():
+        try:
+            mercato_summary = json.loads(Path(a.mercato_json).read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            mercato_summary = None
     df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
-                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site, tune=tune)
+                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site,
+                                       tune=tune, mercato_summary=mercato_summary)
     if a.check or df is None:
         return
     Path(a.storico).mkdir(parents=True, exist_ok=True)
