@@ -830,44 +830,57 @@ def reliability_label(eff90):
     return "Alta"
 
 
-def spiega_voto(pj, role, ref, mercato=None):
-    """Frase in linguaggio semplice, in due parti: (1) il VOTO che vedi sul pallino (scala 1-10 del modello,
-    gia' amplificata per far risaltare le differenze) nei due scenari piu' probabili; (2) lo stesso ragionamento
-    "alla giornalista" (voto vicino a 6, un po' piu' alto se segna/assiste, + il bonus fisso +3/+1)."""
+def _fortuna_line(role, entry, stato):
+    """Riga 'Fortuna di stagione' del ⓘ: compare SEMPRE, anche quando il dato manca, con il motivo."""
+    if role == "P":
+        return "Fortuna di stagione: non calcolata per i portieri."
+    half = CFG["mercato_luck_soglia"] / 2          # stessa soglia con cui il Mercato elenca i TUOI giocatori
+    if stato == "assente":
+        return ("Fortuna di stagione: non ancora disponibile (il riepilogo del Mercato non è ancora stato creato: "
+                "comparirà dopo il prossimo aggiornamento completo).")
+    if stato == "non_riconosciuto":
+        return "Fortuna di stagione: non disponibile (giocatore non abbinato su Understat)."
+    if stato == "pochi_minuti" or not entry:
+        return "Fortuna di stagione: non disponibile (pochissimi minuti giocati in stagione)."
+    f = entry["Fortuna"]
+    if not entry.get("Affidabile"):
+        txt = f"Fortuna di stagione: {f:+.2f} (dato ancora poco affidabile: pochi minuti in stagione)."
+    elif f <= -half:
+        txt = (f"Fortuna di stagione: {f:+.2f} → sfortunato: le sue occasioni valgono più dei gol/assist reali, "
+               f"un motivo in più per non scartarlo su una brutta giornata.")
+    elif f >= half:
+        txt = (f"Fortuna di stagione: {f:+.2f} → sopra le sue occasioni: goditi il rendimento, "
+               f"ma non stupirti se cala.")
+    else:
+        txt = f"Fortuna di stagione: {f:+.2f} → in linea con le sue occasioni."
+    if entry.get("Rigorista"):
+        txt += " Rigorista di questa stagione."
+    return txt
+
+
+def spiega_voto(pj, role, ref, mercato=None, mercato_stato="ok"):
+    """Testo del ⓘ di ogni giocatore, solo dati SUOI (le spiegazioni generali stanno nella didascalia in pagina):
+    scenari sulla scala del pallino (1-10), stessi scenari 'alla giornalista + bonus', e fortuna di stagione."""
     base_fv = pj["fv_raw"] - CFG["goal"] * pj["e_g"] - CFG["assist"] * pj["e_a"]
     p_gol = 1 - math.exp(-pj["e_g"])
     p_ass = 1 - math.exp(-pj["e_a"])
+    show_gol, show_ass = p_gol >= 0.03, (p_ass >= 0.03 and role != "P")
 
     def to_voto(fv):
         return float(np.clip(CFG["rating_center"] + CFG["rating_slope"] * (fv - ref), 1, 10))
 
-    v0 = to_voto(base_fv)
-    txt = f"Sulla scala del pallino colorato (1-10): base senza bonus ~{v0:.1f}."
-    if p_gol >= 0.03:
-        txt += f" Con un gol ({round(100*p_gol)}%): ~{to_voto(base_fv + CFG['goal']):.1f}."
-    if p_ass >= 0.03 and role != "P":
-        txt += f" Con un assist ({round(100*p_ass)}%): ~{to_voto(base_fv + CFG['assist']):.1f}."
-    txt += (" Il voto previsto che vedi \u00e8 la media pesata tra questi scenari (e altri pi\u00f9 rari)."
-            " Se preferisci pensare come un giornalista (voto vicino a 6, un po\u2019 pi\u00f9 alto se segna o assiste,"
-            f" + il bonus fisso della regola): senza bonus ~{CFG['journalist_voto_base']:.1f}.")
-    if p_gol >= 0.03:
-        txt += (f" Con un gol: voto giornalista ~{CFG['journalist_voto_goal']:.1f} + bonus +3 "
-                f"= fantavoto ~{CFG['journalist_voto_goal'] + 3:.1f}.")
-    if p_ass >= 0.03 and role != "P":
-        txt += (f" Con un assist: voto ~{CFG['journalist_voto_assist']:.1f} + bonus +1 "
-                f"= fantavoto ~{CFG['journalist_voto_assist'] + 1:.1f}.")
-    txt += " (Questi ultimi numeri sono una stima di massima, basata su pattern tipici, non ancora calcolata dai tuoi voti reali.)"
-    if mercato and mercato.get("Affidabile"):
-        f = mercato["Fortuna"]
-        if f <= -CFG["mercato_luck_soglia"]:
-            txt += (f" Guardando tutta la stagione (pagina Mercato): finora \u00e8 stato sfortunato, le sue occasioni "
-                    f"valgono pi\u00f9 dei gol/assist reali \u2014 un motivo in pi\u00f9 per non scartarlo su una brutta giornata.")
-        elif f >= CFG["mercato_luck_soglia"]:
-            txt += (f" Guardando tutta la stagione (pagina Mercato): finora ha reso sopra le sue occasioni "
-                    f"\u2014 goditi il rendimento, ma non stupirti se cala.")
-        if mercato.get("Rigorista"):
-            txt += " Risulta rigorista di questa stagione."
-    return txt
+    l1 = f"Pallino (1-10): senza bonus ~{to_voto(base_fv):.1f}"
+    if show_gol:
+        l1 += f" · con un gol ({round(100 * p_gol)}%) ~{to_voto(base_fv + CFG['goal']):.1f}"
+    if show_ass:
+        l1 += f" · con un assist ({round(100 * p_ass)}%) ~{to_voto(base_fv + CFG['assist']):.1f}"
+    jb, jg, ja = CFG["journalist_voto_base"], CFG["journalist_voto_goal"], CFG["journalist_voto_assist"]
+    l2 = f"Voto giornalista + bonus: senza bonus ~{jb:.1f}"
+    if show_gol:
+        l2 += f" · con un gol ~{jg:.1f} + 3 = {jg + 3:.1f}"
+    if show_ass:
+        l2 += f" · con un assist ~{ja:.1f} + 1 = {ja + 1:.1f}"
+    return "\n".join([l1 + ".", l2 + ".", _fortuna_line(role, mercato, mercato_stato)])
 
 
 def fv_ref(role, pr, lg):
@@ -990,6 +1003,12 @@ def data_status(a, odds_msg, inj_msg, calib, tune_meta, fixtures, now):
             st["voti_ultima"] = None
     else:
         st["voti_ultima"] = None
+    mj = Path(a.mercato_json)
+    if mj.exists():
+        d = _days_since(mj.stat().st_mtime)
+        st["mercato"] = f"aggiornato {d:.1f} giorni fa"
+    else:
+        st["mercato"] = "non ancora creato"
     cal_agg = (calib or {}).get("aggiornato")
     st["calib"] = cal_agg or "mai calcolata"
     st["tuning"] = (tune_meta or {}).get("aggiornato") or "mai eseguita"
@@ -1160,6 +1179,13 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
         odds = odds_map.get((team, opp) if home else (opp, team))
         ctx = team_ctx(team, opp, home, S, lg, hf, af, odds)
         pj = project(role, prof, ctx, refs[role], off.get(role, 0.0), beta)
+        if mercato_summary is None:
+            m_entry, m_stato = None, "assente"
+        elif hit is None:
+            m_entry, m_stato = None, "non_riconosciuto"
+        else:
+            m_entry = mercato_summary.get(str(hit.id))
+            m_stato = "ok" if m_entry else "pochi_minuti"
         rows.append({
             "Giocatore": r.nome, "Squadra": r.squadra, "Ruolo": role, "Disp": avail,
             "Avversario": f"{'vs' if home else '@'} {opp}", "Data": f"{when[8:10]}/{when[5:7]}",
@@ -1176,8 +1202,8 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             "TrendTxt": _trend_text(prof.get("trend")),
             "Affidabilita": reliability_label(prof.get("eff90", 0.0)),
             "Eff90": round(prof.get("eff90", 0.0), 1),
-            "SpiegaVoto": spiega_voto(pj, role, refs[role] + off.get(role, 0.0),
-                                      (mercato_summary or {}).get(str(hit.id)) if hit is not None else None),
+            "SpiegaVoto": spiega_voto(pj, role, refs[role] + off.get(role, 0.0), m_entry, m_stato),
+            "MFortuna": (m_entry or {}).get("Fortuna"),
             "Nota": nota,
         })
     if problems:
@@ -1999,7 +2025,7 @@ h1{font-size:20px;margin:12px 0 2px}h2{font-size:15px;margin:18px 0 8px}.s{color
 .info{font-size:12px;color:var(--mut);margin:3px 0 0}.info2{font-size:12px;color:var(--mut);margin:0 0 6px}
 .ctl{display:flex;align-items:center;gap:10px}
 input[type=range]{flex:1;accent-color:var(--acc)}
-.pv{font-size:13px;min-width:74px;text-align:right}.chg{color:var(--acc);font-weight:600}.ibtn{background:none;border:none;color:var(--mut);font-size:15px;cursor:pointer;padding:0 0 0 4px;line-height:1;vertical-align:middle}.spiega{display:none;font-size:12.5px;color:var(--mut);background:var(--line);border-radius:6px;padding:6px 8px;margin:2px 0 6px}
+.pv{font-size:13px;min-width:74px;text-align:right}.chg{color:var(--acc);font-weight:600}.ibtn{background:none;border:none;color:var(--mut);font-size:15px;cursor:pointer;padding:0 0 0 4px;line-height:1;vertical-align:middle}.spiega{display:none;white-space:pre-line;font-size:12.5px;color:var(--mut);background:var(--line);border-radius:6px;padding:6px 8px;margin:2px 0 6px}
 label.o{font-size:12px;white-space:nowrap}
 button,select{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:7px 11px;font-size:13px}
 select{background:var(--card);color:var(--fg);border:1px solid var(--line)}
@@ -2019,6 +2045,11 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
   <b>5.</b> Le probabili formazioni incollate di fresco contano pi&ugrave; della storia di stagione per il SE gioca; la storia conta di pi&ugrave; per il QUANTO rende.<br>
   <b>6.</b> Solo tra due giocatori quasi identici guardo il rischio: pi&ugrave; probabilit&agrave; di gol se rincorro punti, pi&ugrave; stabilit&agrave; se difendo un vantaggio (come nel testa a testa quando sono sfavorito).<br>
   <b>7.</b> Non giudico il metodo da una sola giornata: guardo la Pagella su pi&ugrave; turni insieme.
+  <div style="margin-top:8px"><b>Come leggere il ⓘ di ogni giocatore</b><br>
+  <b>Pallino (1-10)</b>: il voto previsto &egrave; una scala amplificata del fantavoto atteso, pensata per far risaltare le differenze. Il numero sul pallino &egrave; la media pesata tra gli scenari (nessun bonus, un gol, un assist, altri pi&ugrave; rari) secondo quanto sono probabili; il ⓘ mostra i singoli scenari con la loro probabilit&agrave;.<br>
+  <b>Voto giornalista + bonus</b>: stima di massima uguale per tutti (base ~6, ~7,3 se segna, ~6,7 se assiste, poi +3 o +1 di bonus), basata su pattern tipici e non ancora calcolata dai tuoi voti reali.<br>
+  <b>Fortuna di stagione</b> (dal Mercato): (gol reali - gol attesi) per 90 minuti x 3 + (assist reali - attesi) per 90 minuti x 1, senza rigori quando disponibile. Negativa = sfortunato (probabile miglioramento), positiva = sopra le sue occasioni (rischio di calo); la segnalazione scatta oltre &plusmn;0,15 per i tuoi giocatori. Non &egrave; lo z della freccia di forma: quello dice se le occasioni stanno cambiando, la fortuna dice come vengono finalizzate. Usa i dati dell'ultimo Mercato calcolato.
+  </div>
   </div>
 </details>
 <details class="card" id="h2hdet"><summary>Testa a testa</summary>
@@ -2227,6 +2258,7 @@ if (D.reminders && D.reminders.length) { const R = document.getElementById("remi
   line("Quote bookmaker: " + (s.odds || "n/d"));
   line("Infortuni/squalifiche: " + (s.inj || "n/d"));
   line("Statistiche Fantacalcio.it: " + (s.fc || "n/d"));
+  line("Riepilogo Mercato (fortuna nel \u24d8): " + (s.mercato || "n/d"));
   line("Probabili formazioni incollate: " + (s.form || "n/d"));
   line("Voti reali: ultima giornata registrata " + (s.voti_ultima != null ? s.voti_ultima : "nessuna"));
   line("Calibrazione: " + (s.calib || "mai calcolata") + (s.calib_n ? " (" + s.calib_n + " prestazioni)" : ""));
@@ -2590,8 +2622,8 @@ def main(argv=None):
         out.mkdir(parents=True, exist_ok=True)
         (out / "mercato.html").write_text(to_html_mercato(report, err, season, n_.replace(tzinfo=None)), encoding="utf-8")
         if report:
-            summary = {p["id"]: {"Fortuna": p["Fortuna"], "Rigorista": p["Rigorista"], "Affidabile": p["Affidabile"]}
-                      for p in report.get("_all", [])}
+            summary = {p["id"]: {"Fortuna": p["Fortuna"], "Rigorista": p["Rigorista"], "Affidabile": p["Affidabile"],
+                                 "Minuti": p["Minuti"]} for p in report.get("_all", [])}
             Path(a.mercato_json).write_text(json.dumps(summary), encoding="utf-8")
         print(f"Analisi di mercato scritta in {out}/mercato.html")
         return
@@ -2674,8 +2706,12 @@ def main(argv=None):
     if Path(a.mercato_json).exists():
         try:
             mercato_summary = json.loads(Path(a.mercato_json).read_text(encoding="utf-8"))
+            print(f"Riepilogo Mercato caricato da {a.mercato_json} ({len(mercato_summary)} giocatori): la fortuna comparira' nel ⓘ")
         except Exception:  # noqa: BLE001
             mercato_summary = None
+            print(f"  ! {a.mercato_json} non leggibile: la fortuna nel ⓘ non sara' disponibile")
+    else:
+        print(f"Riepilogo Mercato ({a.mercato_json}) non trovato: la fortuna nel ⓘ comparira' dopo il primo --mercato")
     df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
                                        odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site,
                                        tune=tune, mercato_summary=mercato_summary)
