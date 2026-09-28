@@ -8,6 +8,7 @@
 # Mercato: per i rigoristi e il voto reale, carica ogni tanto il file statistiche di Fantacalcio.it nella
 # cartella statistiche/ del repository (sostituisce il precedente); lo trova da solo al prossimo run.
 #
+# Il Mercato gira PRIMA della pagina: cosi' il riepilogo con la fortuna (mercato.json) esiste gia' quando la pagina viene creata.
 # Ogni passaggio dopo il selftest e' isolato (continue-on-error): se uno fallisce (per esempio il Mercato per
 # un file xlsx rovinato), gli altri vanno avanti comunque e il salvataggio finale parte sempre. Il riepilogo
 # in fondo al log dice chiaramente se qualcosa e' andato storto, cosi' non passa inosservato.
@@ -40,20 +41,23 @@ jobs:
         id: calibra
         continue-on-error: true
         run: python fanta_predictor.py --calibra
+      - name: Mercato
+        id: mercato
+        continue-on-error: true
+        run: python fanta_predictor.py --mercato --refresh
       - name: Previsioni (index.html)
         id: refresh
         continue-on-error: true
         run: python fanta_predictor.py --refresh
-      - name: Mercato
-        id: mercato
-        continue-on-error: true
-        run: python fanta_predictor.py --mercato
       - name: Salva su GitHub
         if: always()
         run: |
           git config user.name "fanta-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add -A docs storico calibrazione.json mercato.json
+          # aggiungo solo cio' che esiste: un file mancante (es. Mercato fallito) non deve bloccare il salvataggio
+          for f in docs storico calibrazione.json mercato.json; do
+            if [ -e "$f" ]; then git add -A "$f"; fi
+          done
           git diff --cached --quiet || (git commit -m "aggiornamento previsioni" && git push)
       - name: Riepilogo
         if: always()
