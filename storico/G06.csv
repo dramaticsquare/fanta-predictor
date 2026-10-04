@@ -2,25 +2,25 @@ Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
 Maignan,P,Milan,@ Sassuolo,4.835,4.99,100,4.99,True,0.179
 Falcone,P,Lecce,vs Bologna,4.49,4.49,100,4.49,True,-0.234
 Torriani,P,Milan,@ Sassuolo,4.863,5.02,0,4.69,True,0.179
-Mancini,D,Roma,@ Como,6.316,6.27,100,6.27,True,-0.009
-Ramon,D,Como,vs Roma,6.543,6.51,100,6.51,True,0.009
+Mancini,D,Roma,@ Como,6.315,6.27,100,6.27,True,-0.014
+Ramon,D,Como,vs Roma,6.547,6.51,100,6.51,True,0.014
 Lucumì,D,Juventus,@ Cagliari,6.278,6.4,67,6.35,True,0.427
-Wesley,D,Roma,@ Como,6.334,6.29,70,6.28,True,-0.009
+Wesley,D,Roma,@ Como,6.332,6.29,70,6.28,True,-0.014
 Miranda J.,D,Bologna,@ Lecce,6.441,6.49,76,6.43,True,0.234
 Diego Carlos,D,Parma,@ Inter,6.11,5.79,56,6.0,True,-0.749
-Badiashile,D,Napoli,vs Frosinone,6.258,6.39,10,6.27,True,0.456
+Badiashile,D,Napoli,vs Frosinone,6.258,6.39,10,6.27,True,0.46
 Gabbia,D,Milan,@ Sassuolo,6.242,6.27,19,6.26,True,0.179
 Conceicao,C,Juventus,@ Cagliari,6.904,7.36,100,7.36,True,0.427
 Alajbegovic,C,Juventus,@ Cagliari,6.194,6.65,69,6.65,True,0.427
-Cristante,C,Roma,@ Como,6.267,6.56,100,6.56,True,-0.009
-Lobotka,C,Napoli,vs Frosinone,6.256,6.72,95,6.72,True,0.456
+Cristante,C,Roma,@ Como,6.267,6.56,100,6.56,True,-0.014
+Lobotka,C,Napoli,vs Frosinone,6.257,6.73,95,6.72,True,0.46
 Pulisic,C,Milan,@ Sassuolo,6.983,7.35,40,6.93,True,0.179
-Liberali,C,Como,vs Roma,6.037,6.34,12,6.61,True,0.009
+Liberali,C,Como,vs Roma,6.038,6.34,12,6.62,True,0.014
 Bernabè,C,Parma,@ Inter,6.12,6.14,33,6.48,True,-0.749
 Orsolini,C,Bologna,@ Lecce,6.394,6.78,27,6.69,False,0.234
 Laurientè,A,Sassuolo,vs AC Milan,6.691,6.8,100,6.8,True,-0.179
-Hojlund,A,Napoli,vs Frosinone,7.454,7.8,83,7.7,True,0.456
-De Ketelaere,A,Atalanta,vs Venezia,7.129,7.42,80,7.38,True,0.317
+Hojlund,A,Napoli,vs Frosinone,7.462,7.81,83,7.71,True,0.46
+De Ketelaere,A,Atalanta,vs Venezia,7.136,7.43,80,7.39,True,0.321
 Maldini,A,Cagliari,vs Juventus,6.607,6.62,91,6.68,True,-0.427
 Stulic,A,Lecce,vs Bologna,6.538,6.63,63,6.85,True,-0.234
 Yildiz,A,Juventus,@ Cagliari,6.795,7.13,11,7.22,False,0.427
