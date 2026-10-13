@@ -1,13 +1,13 @@
 {
- "aggiornato": "2026-10-13 14:53",
+ "aggiornato": "2026-10-13 21:20",
  "offset": {
-  "P": 0.088,
-  "D": -0.038,
-  "C": 0.299,
-  "A": 0.174
+  "P": 0.069,
+  "D": -0.086,
+  "C": 0.296,
+  "A": 0.184
  },
  "report": {
-  "n": 55,
+  "n": 75,
   "escluse": [
    1,
    2
@@ -15,33 +15,34 @@
   "giornate": [
    3,
    4,
-   5
+   5,
+   6
   ],
   "bias": {
-   "A": -0.406,
-   "C": -0.672,
-   "D": 0.08,
-   "P": -0.38
+   "A": -0.378,
+   "C": -0.564,
+   "D": 0.152,
+   "P": -0.243
   },
   "n_ruolo": {
-   "A": 15,
-   "C": 16,
-   "D": 18,
-   "P": 6
+   "A": 19,
+   "C": 22,
+   "D": 26,
+   "P": 8
   },
-  "mae_modello": 1.1154181818181819,
-  "mae_media_ruolo": 1.2984848484848486,
-  "n_sub": 52,
-  "mae_modello_sub": 1.1456153846153847,
-  "mae_media_giocatore": 1.3846153846153846,
+  "mae_modello": 1.1176666666666668,
+  "mae_media_ruolo": 1.2537112010796223,
+  "n_sub": 74,
+  "mae_modello_sub": 1.122756756756757,
+  "mae_media_giocatore": 1.2117117117117115,
   "pendenza": {
-   "A": 4.62,
-   "C": 1.84,
-   "D": 2.77
+   "A": 2.2,
+   "C": 0.66,
+   "D": 3.5
   },
-  "spearman_ruolo": 0.3644318917327561,
-  "result_beta_ols": 0.516,
-  "result_n": 91
+  "spearman_ruolo": 0.388646202653567,
+  "result_beta_ols": 0.523,
+  "result_n": 111
  },
  "pagella": {
   "rounds": [
@@ -89,21 +90,36 @@
      "modulo": "4-4-2",
      "punti": 84.0
     }
+   },
+   {
+    "giornata": 6,
+    "modello": {
+     "modulo": "3-4-3",
+     "punti": 69.0
+    },
+    "tua": {
+     "modulo": "4-3-3",
+     "punti": 73.5
+    },
+    "massimo": {
+     "modulo": "4-3-3",
+     "punti": 79.5
+    }
    }
   ],
   "media": {
-   "modello": 74.7,
-   "massimo": 81.5,
-   "n": 3
+   "modello": 73.2,
+   "massimo": 81.0,
+   "n": 4
   },
   "comune": {
-   "modello": 74.7,
-   "tua": 74.0,
-   "massimo": 81.5,
-   "n": 3
+   "modello": 73.2,
+   "tua": 73.9,
+   "massimo": 81.0,
+   "n": 4
   }
  },
- "result_beta": 0.371,
+ "result_beta": 0.392,
  "fc": {
   "n": 390,
   "matches": 10,
