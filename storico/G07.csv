@@ -1,26 +1,26 @@
 Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
-Maignan,P,Milan,vs Atalanta,4.939,5.12,100,5.12,True,0.294
+Maignan,P,Milan,vs Atalanta,4.953,5.14,100,5.14,True,0.304
 Falcone,P,Lecce,@ Udinese,4.349,4.31,100,4.31,True,-0.279
-Torriani,P,Milan,vs Atalanta,4.967,5.15,0,4.66,True,0.294
-Mancini,D,Roma,vs Genoa,6.538,6.65,100,6.65,True,0.512
-Ramon,D,Como,@ Fiorentina,6.667,6.66,100,6.66,True,0.209
-Lucumì,D,Juventus,vs Lazio,6.27,6.35,81,6.32,True,0.417
-Wesley,D,Roma,vs Genoa,6.56,6.68,83,6.59,True,0.512
+Torriani,P,Milan,vs Atalanta,4.98,5.17,0,4.66,True,0.304
+Mancini,D,Roma,vs Genoa,6.523,6.63,100,6.63,True,0.483
+Ramon,D,Como,@ Fiorentina,6.669,6.66,100,6.66,True,0.208
+Lucumì,D,Juventus,vs Lazio,6.269,6.34,81,6.32,True,0.413
+Wesley,D,Roma,vs Genoa,6.544,6.65,83,6.57,True,0.483
 Miranda J.,D,Bologna,vs Inter,6.243,6.02,81,6.06,True,-0.34
-Diego Carlos,D,Parma,vs Torino,6.305,6.17,72,6.18,True,-0.121
-Badiashile,D,Napoli,@ Venezia,6.299,6.33,41,6.26,True,0.3
-Gabbia,D,Milan,vs Atalanta,6.241,6.27,19,6.22,True,0.294
-Conceicao,C,Juventus,vs Lazio,6.808,7.27,83,7.17,True,0.417
-Alajbegovic,C,Juventus,vs Lazio,6.272,6.73,60,6.7,True,0.417
-Cristante,C,Roma,vs Genoa,6.359,6.86,72,6.8,True,0.512
-Lobotka,C,Napoli,@ Venezia,6.239,6.65,100,6.65,True,0.3
-Pulisic,C,Milan,vs Atalanta,7.301,7.71,56,7.25,True,0.294
-Liberali,C,Como,@ Fiorentina,6.045,6.42,9,6.63,True,0.209
-Bernabè,C,Parma,vs Torino,6.149,6.4,38,6.56,True,-0.121
+Diego Carlos,D,Parma,vs Torino,6.298,6.16,72,6.17,True,-0.138
+Badiashile,D,Napoli,@ Venezia,6.298,6.33,41,6.26,True,0.296
+Gabbia,D,Milan,vs Atalanta,6.243,6.28,19,6.22,True,0.304
+Conceicao,C,Juventus,vs Lazio,6.803,7.26,83,7.16,True,0.413
+Alajbegovic,C,Juventus,vs Lazio,6.269,6.73,60,6.7,True,0.413
+Cristante,C,Roma,vs Genoa,6.35,6.84,72,6.79,True,0.483
+Lobotka,C,Napoli,@ Venezia,6.238,6.65,100,6.65,True,0.296
+Pulisic,C,Milan,vs Atalanta,7.309,7.72,56,7.26,True,0.304
+Liberali,C,Como,@ Fiorentina,6.045,6.42,9,6.63,True,0.208
+Bernabè,C,Parma,vs Torino,6.145,6.39,38,6.55,True,-0.138
 Orsolini,C,Bologna,vs Inter,6.503,6.67,49,6.66,False,-0.34
-Laurientè,A,Sassuolo,@ Frosinone,6.959,7.15,100,7.15,True,0.007
-Hojlund,A,Napoli,@ Venezia,7.168,7.47,87,7.44,True,0.3
-De Ketelaere,A,Atalanta,@ AC Milan,6.575,6.64,88,6.71,True,-0.294
+Laurientè,A,Sassuolo,@ Frosinone,6.959,7.14,100,7.14,True,-0.018
+Hojlund,A,Napoli,@ Venezia,7.161,7.46,87,7.43,True,0.296
+De Ketelaere,A,Atalanta,@ AC Milan,6.569,6.63,88,6.71,True,-0.304
 Maldini,A,Cagliari,@ Monza,6.938,7.05,100,7.05,True,-0.189
 Stulic,A,Lecce,@ Udinese,6.586,6.66,48,6.97,True,-0.279
-Yildiz,A,Juventus,vs Lazio,6.795,7.14,9,7.24,False,0.417
+Yildiz,A,Juventus,vs Lazio,6.79,7.14,9,7.24,False,0.413
