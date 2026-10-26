@@ -1,26 +1,26 @@
 Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
-Maignan,P,Milan,vs Bologna,5.104,5.47,100,5.47,True,0.352
-Falcone,P,Lecce,@ Frosinone,3.925,3.99,100,3.99,True,-0.246
-Torriani,P,Milan,vs Bologna,5.131,5.5,0,4.77,True,0.352
+Maignan,P,Milan,vs Bologna,5.118,5.49,100,5.49,True,0.354
+Falcone,P,Lecce,@ Frosinone,3.925,3.99,100,3.99,True,-0.252
+Torriani,P,Milan,vs Bologna,5.145,5.51,0,4.77,True,0.354
 Mancini,D,Roma,vs Cagliari,6.566,6.69,78,6.57,True,0.569
 Ramon,D,Como,@ Torino,6.605,6.58,83,6.51,True,0.271
 Lucumì,D,Juventus,@ Genoa,6.247,6.27,93,6.26,True,0.364
 Wesley,D,Roma,vs Cagliari,6.547,6.68,76,6.55,True,0.569
-Miranda J.,D,Bologna,@ AC Milan,6.201,5.87,95,5.88,True,-0.352
+Miranda J.,D,Bologna,@ AC Milan,6.2,5.86,95,5.88,True,-0.354
 Diego Carlos,D,Parma,vs Udinese,6.293,6.13,82,6.13,True,-0.012
-Badiashile,D,Napoli,@ Monza,6.31,6.28,54,6.21,True,0.255
-Gabbia,D,Milan,vs Bologna,6.254,6.27,7,6.15,True,0.352
+Badiashile,D,Napoli,@ Monza,6.311,6.28,54,6.22,True,0.26
+Gabbia,D,Milan,vs Bologna,6.255,6.28,7,6.15,True,0.354
 Conceicao,C,Juventus,@ Genoa,6.599,7.09,49,6.87,True,0.364
 Alajbegovic,C,Juventus,@ Genoa,6.154,6.64,52,6.65,True,0.364
 Cristante,C,Roma,vs Cagliari,6.367,6.96,61,6.84,True,0.569
-Lobotka,C,Napoli,@ Monza,6.171,6.6,83,6.61,True,0.255
-Pulisic,C,Milan,vs Bologna,7.272,7.75,85,7.59,True,0.352
+Lobotka,C,Napoli,@ Monza,6.172,6.61,83,6.62,True,0.26
+Pulisic,C,Milan,vs Bologna,7.264,7.75,85,7.58,True,0.354
 Liberali,C,Como,@ Torino,6.471,6.91,25,6.73,True,0.271
 Bernabè,C,Parma,vs Udinese,6.198,6.5,44,6.59,True,-0.012
-Orsolini,C,Bologna,@ AC Milan,6.478,6.6,23,6.65,False,-0.352
+Orsolini,C,Bologna,@ AC Milan,6.472,6.6,23,6.65,False,-0.354
 Laurientè,A,Sassuolo,vs Lazio,6.576,6.49,83,6.58,True,-0.117
-Hojlund,A,Napoli,@ Monza,6.979,7.08,79,7.07,True,0.255
+Hojlund,A,Napoli,@ Monza,6.986,7.09,79,7.08,True,0.26
 De Ketelaere,A,Atalanta,@ Fiorentina,6.752,6.69,100,6.69,True,-0.065
 Maldini,A,Cagliari,@ Roma,6.597,6.29,100,6.29,True,-0.569
-Stulic,A,Lecce,@ Frosinone,6.484,6.33,36,6.79,True,-0.246
+Stulic,A,Lecce,@ Frosinone,6.48,6.33,36,6.79,True,-0.252
 Yildiz,A,Juventus,@ Genoa,6.639,6.8,0,7.05,False,0.364
