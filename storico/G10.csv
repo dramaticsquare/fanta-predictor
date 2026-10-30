@@ -1,0 +1,26 @@
+Giocatore,Ruolo,Squadra,Avversario,FV_raw,Fantavoto,Titolare%,EV,Disp,Res
+Maignan,P,Milan,vs Inter,4.205,4.3,100,4.3,True,-0.182
+Falcone,P,Lecce,vs Genoa,4.812,4.97,100,4.97,True,-0.055
+Torriani,P,Milan,vs Inter,4.23,4.33,0,4.76,True,-0.182
+Mancini,D,Roma,@ Udinese,6.495,6.55,83,6.48,True,0.43
+Ramon,D,Como,vs Venezia,6.874,7.01,87,6.9,True,0.587
+Lucumì,D,Juventus,vs Napoli,6.185,6.1,95,6.11,True,0.152
+Wesley,D,Roma,@ Udinese,6.421,6.48,64,6.36,True,0.43
+Miranda J.,D,Bologna,vs Monza,6.386,6.38,83,6.34,True,0.302
+Diego Carlos,D,Parma,@ Atalanta,6.154,5.77,62,5.91,True,-0.456
+Badiashile,D,Napoli,@ Juventus,6.206,5.97,40,6.07,True,-0.152
+Gabbia,D,Milan,vs Inter,6.137,5.89,6,6.12,True,-0.182
+Conceicao,C,Juventus,vs Napoli,6.481,6.86,32,6.74,True,0.152
+Alajbegovic,C,Juventus,vs Napoli,6.134,6.51,45,6.6,True,0.152
+Cristante,C,Roma,@ Udinese,6.347,6.87,69,6.81,True,0.43
+Lobotka,C,Napoli,@ Juventus,6.085,6.31,70,6.42,True,-0.152
+Pulisic,C,Milan,vs Inter,6.847,7.06,78,6.98,True,-0.182
+Liberali,C,Como,vs Venezia,6.996,7.6,17,6.84,True,0.587
+Bernabè,C,Parma,@ Atalanta,6.215,6.29,63,6.44,True,-0.456
+Orsolini,C,Bologna,vs Monza,6.82,7.28,18,6.79,False,0.302
+Laurientè,A,Sassuolo,vs Fiorentina,6.7,6.66,87,6.71,True,-0.027
+Hojlund,A,Napoli,@ Juventus,6.629,6.53,83,6.62,True,-0.152
+De Ketelaere,A,Atalanta,vs Parma Calcio 1913,7.135,7.34,100,7.34,True,0.456
+Maldini,A,Cagliari,@ Lazio,6.476,6.21,83,6.35,True,-0.474
+Stulic,A,Lecce,vs Genoa,6.294,6.24,33,6.79,True,-0.055
+Yildiz,A,Juventus,vs Napoli,6.583,6.63,0,7.06,False,0.152
