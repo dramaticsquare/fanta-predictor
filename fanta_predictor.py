@@ -94,7 +94,8 @@ CFG = {
     "result_beta_prior": 0.15,
     "result_beta_shrink": 60,
     "tz": "Europe/Rome",
-    "version": "20/10 - fasce percentuali Fantacalcio.it",
+    "version": "21/10 - dashboard, Fantaindex, scambi",
+    "index_scale": 30,           # [EURISTICA] punti di Fantaindex per ogni fantavoto sopra la media del ruolo (50 = giocatore medio)
     "cache_hours": 12,
 }
 
@@ -947,7 +948,7 @@ def best_lineup(df, modules=None):
 # Stima leggera (senza chiamate di rete aggiuntive: solo dati di stagione gia' scaricati) del fantavoto
 # atteso in una partita "neutra" per OGNI giocatore di Serie A. Serve al testa a testa: per i tuoi giocatori
 # uso la previsione precisa della giornata, per quelli dell'avversario serve qualcosa comunque disponibile.
-def season_baseline(pcur, priors, S, lg):
+def season_baseline(pcur, priors, S, lg, mercato=None):
     df = pcur.copy()
     df["role"] = df["position"].astype(str).str.split().str[0].map(POS_MAP)
     df = df.dropna(subset=["role"])
@@ -969,7 +970,8 @@ def season_baseline(pcur, priors, S, lg):
                 p_cs = float(np.exp(-lg * team_S["D"]))
                 est += CFG["clean_sheet"]["D"] * p_cs
         out.append({"Giocatore": r.player_name, "Squadra": r.team_title, "Ruolo": r.role,
-                    "EstFv": round(float(est), 2), "Minuti": int(r.time)})
+                    "EstFv": round(float(est), 2), "Minuti": int(r.time),
+                    "Fortuna": ((mercato or {}).get(str(r.id)) or {}).get("Fortuna")})
     return out
 
 
@@ -1076,7 +1078,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
     titles = list(hist.keys())
     off = (calib or {}).get("offset", {})
     beta = float((calib or {}).get("result_beta", CFG["result_beta_prior"]))
-    baseline = season_baseline(pcur, priors, S, lg) if not check_only else []
+    baseline = season_baseline(pcur, priors, S, lg, mercato_summary) if not check_only else []
 
     fx = {}
     for m in fixtures:
@@ -2033,12 +2035,23 @@ button,select{background:var(--acc);color:#fff;border:0;border-radius:8px;paddin
 select{background:var(--card);color:var(--fg);border:1px solid var(--line)}
 textarea{width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px;font-size:13px;font-family:inherit}
 details summary{cursor:pointer;font-weight:600;font-size:14px}
+body{padding-bottom:84px}.hid{display:none!important}
+#hero{background:linear-gradient(135deg,var(--acc),#7c3aed);color:#fff;border-radius:16px;padding:14px 14px 12px;margin:10px 0}
+#hero h1{margin:0;font-size:19px;color:#fff}#hero .s{color:#ffffffcc}
+#kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+#kpi div{background:#ffffff26;border-radius:12px;padding:8px 4px;text-align:center}
+#kpi b{display:block;font-size:17px}#kpi span{font-size:11px;opacity:.85}
+#tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;max-width:720px;margin:auto;display:flex;gap:4px;background:var(--card);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+#tabs button{flex:1;background:none;color:var(--mut);border-radius:10px;padding:9px 2px;font-size:12.5px;font-weight:600}
+#tabs button.on{background:var(--acc);color:#fff}
+.fi{font-size:11px;font-weight:700;border-radius:6px;padding:1px 6px;margin-left:6px;background:var(--line);color:var(--fg)}
+.card,.row{box-shadow:0 1px 3px #0001}
+.tv{font-size:16px;font-weight:700;margin-bottom:4px}
 </style></head><body>
-<h1>Fanta Predictor</h1>
-<div class="s" id="meta"></div>
+<div id="hero"><h1>Fanta Predictor</h1><div class="s" id="meta"></div><div id="kpi"><div><b id="k1">-</b><span>modulo</span></div><div><b id="k2">-</b><span>valore atteso</span></div><div><b id="k3">-</b><span>Fantaindex medio XI</span></div></div></div>
 <div id="remind" class="card" style="display:none;border-left:3px solid #d97706"></div>
-<details class="card" id="statusdet"><summary>Stato dei dati</summary><div id="statuscard" class="s" style="margin-top:6px"></div></details>
-<details class="card" id="howdet"><summary>Come uso questa pagina per scegliere</summary>
+<details class="card" id="statusdet" data-t="info"><summary>Stato dei dati</summary><div id="statuscard" class="s" style="margin-top:6px"></div></details>
+<details class="card" id="howdet" data-t="info"><summary>Come uso questa pagina per scegliere</summary>
   <div class="s" style="margin-top:6px">
   <b>1.</b> Parto dalla formazione automatica: &egrave; gi&agrave; la sintesi di tutti i segnali disponibili.<br>
   <b>2.</b> Se un giocatore ha la nota &#9878;&#65039; "in bilico", il distacco &egrave; dentro il rumore: non conta come una vera preferenza del modello.<br>
@@ -2054,36 +2067,42 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
   </div>
   </div>
 </details>
-<details class="card" id="h2hdet"><summary>Testa a testa</summary>
+<details class="card" id="h2hdet" data-t="form"><summary>Testa a testa</summary>
   <div class="s" style="margin:6px 0">Incolla gli 11 nomi della formazione avversaria (uno per riga, va bene copiarli cos&igrave; come sono nell&rsquo;app): stimo il punteggio di entrambe e la probabilit&agrave; di vincere. Per i tuoi uso la previsione precisa della giornata; per i suoi solo una stima di massima basata sulla stagione, senza sapere se schiera davvero questi titolari.</div>
   <textarea id="oppo" rows="6" placeholder="Es.\nDi Gregorio\nBremer\nKalulu\n..."></textarea>
   <div class="bh" style="margin-top:6px"><button id="h2hcalc">Calcola</button></div><div id="h2hout"></div>
 </details>
-<div id="bar">
+<div id="bar" data-t="form">
   <div class="bh"><b id="lt">Formazione</b>
     <select id="mod" aria-label="Modulo"></select><button id="pbtn">Incolla elenco</button><button id="copy">Copia</button></div>
   <div class="mini" id="mini"></div>
   <div class="s" id="dl" style="margin-top:3px"></div>
 </div>
-<h2>Dettaglio formazione</h2>
-<div class="s" style="margin-bottom:6px">Tocca un titolare per mandarlo in panchina, o un panchinaro per farlo giocare: al suo posto entra il migliore disponibile. &#128274; = scelta tua, tocca di nuovo per tornare in automatico.</div>
-<div class="info" id="warn" style="display:none;color:#d97706;margin-bottom:6px"></div>
-<div class="card" id="lineup"></div>
-<h2>Panchina (in ordine)</h2><div class="card" id="bench"></div>
-<div id="probs" class="card" style="display:none"></div>
-<div id="cal" class="card" style="display:none"></div>
-<div id="pag" class="card" style="display:none"></div>
-<h2>Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
-<div class="s" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
-<details class="card" id="pdet"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
+<h2 data-t="form">Dettaglio formazione</h2>
+<div class="s" data-t="form" style="margin-bottom:6px">Tocca un titolare per mandarlo in panchina, o un panchinaro per farlo giocare: al suo posto entra il migliore disponibile. &#128274; = scelta tua, tocca di nuovo per tornare in automatico.</div>
+<div class="info" data-t="form" id="warn" style="display:none;color:#d97706;margin-bottom:6px"></div>
+<div class="card" data-t="form" id="lineup"></div>
+<h2 data-t="form">Panchina (in ordine)</h2><div class="card" data-t="form" id="bench"></div>
+<div id="probs" data-t="form" class="card" style="display:none"></div>
+<div id="cal" data-t="info" class="card" style="display:none"></div>
+<div id="pag" data-t="info" class="card" style="display:none"></div>
+<h2 data-t="giocatori">Titolarit&agrave; e infortuni <button id="reset" style="float:right">Azzera</button></h2>
+<div class="s" data-t="giocatori" style="margin-bottom:8px">Muovi lo slider con le percentuali delle probabili formazioni: la formazione si ricalcola subito. Le modifiche restano salvate su questo dispositivo fino alla giornata successiva.</div>
+<details class="card" id="pdet" data-t="giocatori"><summary>Incolla un elenco (infortunati, squalificati, probabili formazioni)</summary>
   <div class="s" style="margin:6px 0">Incolla il testo di un sito con le probabili formazioni, anche pi&ugrave; partite insieme: riconosco i blocchi tipo &quot;MILAN (3-4-2-1): Maignan; Gila, ...&quot; (titolari 90%, alternative con &quot;/&quot; 50%, gli altri della tua squadra 15%), i &quot;Ballottaggi ... 55%-45%&quot; e gli &quot;Indisponibili/Squalificati: ...&quot;. Vanno bene anche righe singole come &quot;Maignan 100%&quot; o &quot;Pulisic infortunato&quot;. Con &quot;Salva su GitHub&quot; conservi il testo di Fantacalcio.it per misurare, giornata dopo giornata, quanto &egrave; affidabile.</div>
   <textarea id="paste" rows="6" placeholder="Maignan 100%&#10;Pulisic infortunato&#10;Lucum&igrave; squalificato"></textarea>
   <div class="bh" style="margin-top:6px"><select id="pmode"><option value="auto">Riconosci dalla riga</option><option value="out">Sono tutti indisponibili</option><option value="start">Sono tutti probabili titolari</option></select>
   <button id="apply">Applica</button><button id="gh">Salva su GitHub</button></div><div class="info" id="pout"></div></details>
-<div id="roster"></div>
-<p class="s" id="ver"></p>
-<p class="s" id="beta"></p>
-<p class="s">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Affidabilit&agrave; = quanti minuti recenti (pesati) sostengono la stima del suo rendimento medio, non quanto sar&agrave; prevedibile il voto di QUESTA giornata: anche con affidabilit&agrave; alta un singolo episodio (gol, rosso, infortunio) pu&ograve; spostare il fantavoto di diversi punti. Modello statistico, non una garanzia.</p>
+<div id="roster" data-t="giocatori"></div>
+<div class="card" data-t="scambi"><b>Analisi scambi</b>
+  <div class="s" style="margin:6px 0">Scrivi i giocatori (uno per riga). Confronto quanto valgono, per giornata, rispetto al giocatore medio del loro ruolo, in base a xG e xA di stagione. Posso cercare qualsiasi giocatore di Serie A con minuti giocati.</div>
+  <div class="s">Cedi</div><textarea id="tgive" rows="3" placeholder="Es.&#10;Maldini"></textarea>
+  <div class="s" style="margin-top:6px">Ricevi</div><textarea id="tget" rows="3" placeholder="Es.&#10;Lautaro&#10;Dybala"></textarea>
+  <div class="bh" style="margin-top:6px"><button id="tcalc">Valuta lo scambio</button></div><div id="tout"></div></div>
+<div id="tabs"><button data-k="form">Formazione</button><button data-k="giocatori">Giocatori</button><button data-k="scambi">Scambi</button><button data-k="info">Info</button></div>
+<p class="s" data-t="info" id="ver"></p>
+<p class="s" data-t="info" id="beta"></p>
+<p class="s" data-t="info">Voto previsto: 6 = giocatore medio del suo ruolo in una partita neutra (come i voti veri); +1 fantavoto rispetto alla media = +1,5 voti. Vale SE il giocatore scende in campo. Gol/assist % = probabilit&agrave; di almeno un gol/assist. Valore atteso = P(gioca) x fantavoto + (1 - P) x sostituto medio. Affidabilit&agrave; = quanti minuti recenti (pesati) sostengono la stima del suo rendimento medio, non quanto sar&agrave; prevedibile il voto di QUESTA giornata: anche con affidabilit&agrave; alta un singolo episodio (gol, rosso, infortunio) pu&ograve; spostare il fantavoto di diversi punti. Modello statistico, non una garanzia.</p>
 <script>
 const D = __DATA__;
 const KEY = "fanta_v2_" + D.giornata;
@@ -2095,6 +2114,7 @@ const S = D.players.map(p => Object.assign({}, p, {
   disp: (saved[p.Giocatore] && saved[p.Giocatore].disp != null) ? saved[p.Giocatore].disp : !!p.Disp,
   force: (saved[p.Giocatore] && saved[p.Giocatore].f) || 0 }));            // 1 = fisso titolare, -1 = fisso in panchina
 const ev = s => (s.p/100)*s.Fantavoto + (1 - s.p/100)*s.Rif;
+const fi = s => Math.round(Math.max(0, Math.min(100, 50 + D.fiScale * (ev(s) - s.Rif))));
 const col = v => "hsl(" + (120*(Math.max(3,Math.min(9,v))-3)/6).toFixed(0) + ",62%,40%)";
 function save(){ const o = {}; S.forEach(s => { if (s.p !== s.p0 || s.disp !== !!s.Disp || s.force) o[s.Giocatore] = {p:s.p, disp:s.disp, f:s.force}; });
   if (modSel !== "auto") o._mod = modSel; try { localStorage.setItem(KEY, JSON.stringify(o)); } catch (e) {} }
@@ -2146,6 +2166,7 @@ function marginNotes(b){
 }
 function line(s, where, mnotes){
   const l = mk("div","ln tap"); l.appendChild(mk("b",null,s.Ruolo)); l.appendChild(mk("span","nm",(s.force ? "\ud83d\udd12 " : "") + s.Giocatore + (s.Trend ? " " + s.Trend : "")));
+  l.appendChild(mk("span","fi","FI " + fi(s)));
   l.appendChild(mk("span","tag", s.Avversario + " \u00b7 voto " + s.Voto.toFixed(1) + " \u00b7 gioca " + s.p + "%" + (s.KO && Date.parse(s.KO) <= Date.now() ? " \u00b7 partita iniziata" : "") + (s.force === -1 ? " \u00b7 tua scelta: panchina" : s.force === 1 ? " \u00b7 tua scelta: titolare" : "")));
   if (mnotes && mnotes.has(s.Giocatore)) { const w = mk("div","margin", mnotes.get(s.Giocatore)); l.appendChild(w); }
   l.addEventListener("click", () => {
@@ -2163,6 +2184,8 @@ function update(){
   if (!b) { L.textContent = "Nessun modulo valido con i giocatori disponibili."; document.getElementById("lt").textContent = "Formazione non disponibile"; }
   else {
     document.getElementById("lt").textContent = b.mod + " \u00b7 atteso " + b.tot.toFixed(1);
+    document.getElementById("k1").textContent = b.mod; document.getElementById("k2").textContent = b.tot.toFixed(1);
+    document.getElementById("k3").textContent = Math.round(b.pick.reduce((q, s) => q + fi(s), 0) / b.pick.length);
     ["P","D","C","A"].forEach(r => { const g = byRole(b, r), d = mk("div"); d.appendChild(mk("i",null,r));
       d.appendChild(document.createTextNode(g.map(s => s.Giocatore + (s.force === 1 ? "*" : "")).join(" \u00b7 "))); M.appendChild(d);
       g.forEach(s => { inSet.add(s.Giocatore); L.appendChild(line(s, "xi", mnotes)); }); });
@@ -2171,7 +2194,8 @@ function update(){
   document.querySelectorAll(".row").forEach(r => { const s = S[+r.dataset.i];
     r.classList.toggle("in", inSet.has(s.Giocatore)); r.classList.toggle("out", !s.disp);
     const pv = r.querySelector(".pv"); pv.textContent = s.p + "%" + (s.p !== s.p0 ? " (modello " + s.p0 + "%)" : "");
-    pv.classList.toggle("chg", s.p !== s.p0); });
+    pv.classList.toggle("chg", s.p !== s.p0);
+    const f = r.querySelector(".fi"); if (f) f.textContent = "FI " + fi(s); });
 }
 
 function lineupText(){
@@ -2189,6 +2213,7 @@ function build(){
   const R = document.getElementById("roster"); R.textContent = "";
   D.order.forEach(i => { const s = S[i], r = mk("div","row"); r.dataset.i = i;
     const t = mk("div","top"), left = mk("div"); left.appendChild(mk("span","r",s.Ruolo)); left.appendChild(mk("span","nm",s.Giocatore + (s.Trend ? " " + s.Trend : "")));
+    left.appendChild(mk("span","fi","FI " + fi(s)));
     const ib = mk("button","ibtn","\u24d8"); ib.type = "button"; ib.setAttribute("aria-label", "Come si legge questo voto");
     ib.addEventListener("click", e => { e.stopPropagation(); const box = r.querySelector(".spiega"); box.style.display = box.style.display === "block" ? "none" : "block"; });
     const bd = mk("div","badge",s.Voto.toFixed(1)); bd.style.background = col(s.Voto); left.appendChild(ib); t.appendChild(left); t.appendChild(bd); r.appendChild(t);
@@ -2449,7 +2474,46 @@ document.getElementById("gh").addEventListener("click", e => {
 document.getElementById("pbtn").addEventListener("click", () => { const d = document.getElementById("pdet"); d.open = true;
   if (d.scrollIntoView) d.scrollIntoView({block: "center"}); document.getElementById("paste").focus(); });
 document.getElementById("ver").textContent = "versione pagina: " + D.ver;
-build(); update();
+// ---------------- analisi scambi ----------------
+(function(){
+  const ALLP = D.allPlayers || [];
+  const nz = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\u00f8/gi,'o').replace(/\u00e6/gi,'ae').replace(/\u0142/gi,'l').replace(/\u0111/gi,'d').replace(/\u00df/g,'ss').toLowerCase();
+  const tk = s => nz(s).replace(/[^a-z ]/g,' ').split(/\s+/).filter(t => t.length > 1);
+  const find = name => { const nt = tk(name); if (!nt.length) return null; let best = null;
+    ALLP.forEach(p => { const pt = tk(p.Giocatore); if (nt.every(t => pt.includes(t)) && (!best || p.Minuti > best.Minuti)) best = p; }); return best; };
+  const ref = {}; ["P","D","C","A"].forEach(r => { const v = ALLP.filter(p => p.Ruolo === r && p.Minuti >= 300).map(p => p.EstFv); ref[r] = v.length ? v.reduce((a, b) => a + b, 0) / v.length : 6; });
+  const val = p => p.EstFv - ref[p.Ruolo];
+  const note = p => (p.Fortuna == null ? "" : p.Fortuna <= -0.3 ? " \u00b7 sfortunato: probabile rialzo" : p.Fortuna >= 0.3 ? " \u00b7 sopra le occasioni: rischio calo" : "") + (p.Minuti < 300 ? " \u00b7 pochi minuti: stima incerta" : "");
+  document.getElementById("tcalc").addEventListener("click", () => {
+    const rd = id => document.getElementById(id).value.split("\n").map(x => x.trim()).filter(Boolean), out = document.getElementById("tout");
+    out.textContent = "";
+    const give = rd("tgive"), get = rd("tget");
+    if (!give.length || !get.length) { out.appendChild(mk("div","info","Scrivi almeno un giocatore per parte.")); return; }
+    const side = ns => { const ok = [], miss = []; ns.forEach(n => { const p = find(n); if (p) ok.push(p); else miss.push(n); }); return {ok, miss}; };
+    const g = side(give), r = side(get);
+    if (!g.ok.length || !r.ok.length) { out.appendChild(mk("div","info","Non riconosco nessun giocatore su un lato: prova con il cognome.")); return; }
+    const sum = a => a.reduce((q, p) => q + val(p), 0), delta = sum(r.ok) - sum(g.ok);
+    const verdict = delta > 0.15 ? "Ci guadagni" : delta < -0.15 ? "Ci perdi" : "Scambio sostanzialmente pari";
+    const head = mk("div","tv", verdict + " (" + (delta >= 0 ? "+" : "") + delta.toFixed(2) + " fantavoto a giornata)");
+    head.style.color = delta > 0.15 ? "#16a34a" : delta < -0.15 ? "#dc2626" : "inherit"; out.appendChild(head);
+    const list = (t, a) => { out.appendChild(mk("div","info", t)); a.forEach(p => out.appendChild(mk("div","info", "\u2022 " + p.Giocatore + " (" + p.Ruolo + ", " + p.Squadra + "): " + (val(p) >= 0 ? "+" : "") + val(p).toFixed(2) + " sul ruolo" + note(p)))); };
+    list("Cedi:", g.ok); list("Ricevi:", r.ok);
+    const cnt = a => ["P","D","C","A"].map(k => k + a.filter(p => p.Ruolo === k).length).join(" ");
+    if (cnt(g.ok) !== cnt(r.ok)) out.appendChild(mk("div","info","Attenzione ai ruoli: cedi " + cnt(g.ok) + ", ricevi " + cnt(r.ok) + ". Dovrai coprire i reparti scoperti."));
+    const miss = g.miss.concat(r.miss); if (miss.length) out.appendChild(mk("div","info","Non trovati: " + miss.join(", ")));
+    out.appendChild(mk("div","info","Valore = fantavoto atteso in una partita neutra meno la media del ruolo: non considera il calendario, i crediti n\u00e9 le regole della tua lega, e conta solo se il giocatore gioca davvero."));
+  });
+})();
+// ---------------- schede ----------------
+function showTab(t){
+  document.querySelectorAll("[data-t]").forEach(e => e.classList.toggle("hid", e.dataset.t !== t));
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.k === t));
+  try { sessionStorage.setItem("fanta_tab", t); } catch (e) {} window.scrollTo(0, 0);
+}
+document.querySelectorAll("#tabs button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.k)));
+document.getElementById("pbtn").addEventListener("click", () => { showTab("giocatori"); const d = document.getElementById("pdet"); d.open = true; document.getElementById("paste").focus(); });
+let t0 = "form"; try { t0 = sessionStorage.getItem("fanta_tab") || "form"; } catch (e) {}
+build(); update(); showTab(t0);
 </script></body></html>"""
 
 
@@ -2481,6 +2545,7 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None, stat
         "fcmap": (calib or {}).get("fc_map") or [],
         "allPlayers": info.get("baseline", []),
         "h2hScale": CFG["h2h_scale"],
+        "fiScale": CFG["index_scale"],
         "marginTh": CFG["lineup_margin_threshold"],
         "status": status or {},
         "reminders": list(reminders),
