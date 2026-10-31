@@ -1,13 +1,13 @@
 {
- "aggiornato": "2026-10-31 08:47",
+ "aggiornato": "2026-10-31 08:51",
  "offset": {
-  "P": 0.189,
-  "D": -0.158,
-  "C": 0.304,
-  "A": -0.026
+  "P": 0.03,
+  "D": -0.109,
+  "C": 0.157,
+  "A": 0.161
  },
  "report": {
-  "n": 109,
+  "n": 125,
   "escluse": [
    1,
    2
@@ -18,34 +18,35 @@
    5,
    6,
    7,
-   8
+   8,
+   9
   ],
   "bias": {
-   "A": 0.045,
-   "C": -0.493,
-   "D": 0.241,
-   "P": -0.504
+   "A": -0.262,
+   "C": -0.244,
+   "D": 0.159,
+   "P": -0.073
   },
   "n_ruolo": {
-   "A": 27,
-   "C": 32,
-   "D": 38,
-   "P": 12
+   "A": 32,
+   "C": 36,
+   "D": 43,
+   "P": 14
   },
-  "mae_modello": 1.114376146788991,
-  "mae_media_ruolo": 1.2155538566089026,
-  "n_sub": 107,
-  "mae_modello_sub": 1.0913177570093457,
-  "mae_media_giocatore": 1.2255451713395638,
+  "mae_modello": 1.2421759999999997,
+  "mae_media_ruolo": 1.3387458471760796,
+  "n_sub": 123,
+  "mae_modello_sub": 1.2241951219512193,
+  "mae_media_giocatore": 1.3562330623306234,
   "pendenza": {
-   "A": 1.96,
-   "C": 0.99,
-   "D": 3.11,
-   "P": 1.93
+   "A": 2.05,
+   "C": 0.83,
+   "D": 3.01,
+   "P": 1.33
   },
-  "spearman_ruolo": 0.37033823097753227,
-  "result_beta_ols": 0.649,
-  "result_n": 145
+  "spearman_ruolo": 0.2894555222767454,
+  "result_beta_ols": 0.704,
+  "result_n": 161
  },
  "pagella": {
   "rounds": [
@@ -138,21 +139,36 @@
      "modulo": "5-3-2",
      "punti": 77.0
     }
+   },
+   {
+    "giornata": 9,
+    "modello": {
+     "modulo": "3-4-3",
+     "punti": 69.5
+    },
+    "tua": {
+     "modulo": "4-3-3",
+     "punti": 73.5
+    },
+    "massimo": {
+     "modulo": "4-3-3",
+     "punti": 80.5
+    }
    }
   ],
   "media": {
-   "modello": 71.7,
-   "massimo": 78.9,
-   "n": 6
+   "modello": 71.4,
+   "massimo": 79.1,
+   "n": 7
   },
   "comune": {
-   "modello": 71.7,
-   "tua": 71.2,
-   "massimo": 78.9,
-   "n": 6
+   "modello": 71.4,
+   "tua": 71.6,
+   "massimo": 79.1,
+   "n": 7
   }
  },
- "result_beta": 0.503,
+ "result_beta": 0.554,
  "fc": {
   "n": 1196,
   "matches": 30,
