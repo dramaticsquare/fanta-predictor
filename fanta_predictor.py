@@ -94,7 +94,7 @@ CFG = {
     "result_beta_prior": 0.15,
     "result_beta_shrink": 60,
     "tz": "Europe/Rome",
-    "version": "22/09 - forma recente e taratura",
+    "version": "20/10 - fasce percentuali Fantacalcio.it",
     "cache_hours": 12,
 }
 
@@ -1256,7 +1256,8 @@ _UPD = re.compile(r"ultimo aggiornamento\s+(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{1,2
 def parse_fc_text(text):
     """Legge il testo copiato da Fantacalcio.it (stesso formato del lettore nella pagina).
     Ritorna una lista di partite: home, away, updated (ora italiana), entries per squadra, out, doubt."""
-    L = [x.strip() for x in text.splitlines()]
+    L = [x.strip() for x in text.replace("\u00a0", " ").splitlines()]
+    L = [x for x in L if x]          # copiando da telefono compaiono righe vuote tra una riga e l'altra
     n, k, pending, upd, out = len(L), 0, [], None, []
     while k < n:
         if k + 1 < n and _MOD.match(L[k + 1]) and L[k] and not _PCT.match(L[k]) and not _MOD.match(L[k]):
@@ -1285,7 +1286,8 @@ def parse_fc_text(text):
             upd = datetime(y, mo, d, hh, mi)
         if re.match(r"(?i)^dettaglio calciatori", L[k]):
             j, cur, o_names, d_names = k + 1, None, [], []
-            while j < n and not re.match(r"(?i)^(stemma|campioncino)\b", L[j]) and not (j + 1 < n and _MOD.match(L[j + 1])):
+            while (j < n and not re.match(r"(?i)^(stemma|campioncino|sky logo|fluid logo|probabili formazioni)\b", L[j])
+                   and not (j + 1 < n and (_MOD.match(L[j + 1]) or re.match(r"(?i)^stemma\b", L[j + 1])))):
                 t = L[j]
                 hm = re.match(r"(?i)^(ballottaggi|squalificati|diffidati|infortunati|in dubbio)$", t)
                 if hm:
@@ -1335,7 +1337,7 @@ def _roster_players(raw):
 
 
 def _bucket(p):
-    for lo, hi in ((100, 100), (60, 99), (50, 59), (30, 49), (10, 29), (0, 9)):
+    for lo, hi in ((100, 100), (80, 99), (60, 79), (50, 59), (30, 49), (10, 29), (0, 9)):
         if lo <= p <= hi:
             return lo, hi
     return 0, 9
@@ -2378,7 +2380,7 @@ function applyLines(text, mode){
 const isMod = l => /^\d(?:-\d){1,3}$/.test(l || "");
 const isPct = l => /^\d{1,3}\s*%$/.test(l || "");
 function parseFantacalcio(text){
-  const L = text.split(/\r?\n/).map(x => x.trim()), n = L.length, acts = new Map(), read = [];
+  const L = text.replace(/\u00a0/g, " ").split(/\r?\n/).map(x => x.trim()).filter(Boolean), n = L.length, acts = new Map(), read = [];
   let pending = [], matches = 0, k = 0;
   const put = (s, p, out) => { const a = acts.get(s.Giocatore) || {s}; if (out) a.out = true; else a.p = p; acts.set(s.Giocatore, a); };
   while (k < n){
@@ -2398,7 +2400,7 @@ function parseFantacalcio(text){
     }
     if (/^dettaglio calciatori/i.test(L[k])) {
       const keys = pending.slice(-2).filter(Boolean), cand = S.filter(s => keys.includes(s.Squadra)); let j = k + 1, cur = null;
-      while (j < n && !/^(stemma|campioncino)\b/i.test(L[j]) && !(j + 1 < n && isMod(L[j+1]))) {
+      while (j < n && !/^(stemma|campioncino|sky logo|fluid logo|probabili formazioni)\b/i.test(L[j]) && !(j + 1 < n && (isMod(L[j+1]) || /^stemma\b/i.test(L[j+1])))) {
         const t = L[j], hm = t.match(/^(ballottaggi|squalificati|diffidati|infortunati|in dubbio)$/i);
         if (hm) cur = hm[1].toLowerCase();
         else if (cur && t && !/^nessun/i.test(t) && !/[,\d%]/.test(t) && t.length <= 32 && /^[A-Z\u00c0-\u00dd]/.test(t)) {
