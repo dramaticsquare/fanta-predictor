@@ -1,76 +1,76 @@
 Giocatore,Squadra,Ruolo,Disp,Avversario,Data,xG,xA,P_gol,P_ass,CS%,Titolare%,Fantavoto,FV_raw,Voto,EV,Rif,GolSq,GolOpp,Fonte,Res,P_V,P_N,P_S,KO,Trend,TrendTxt,Affidabilita,Eff90,SpiegaVoto,MFortuna,Nota
-Hojlund,Napoli,A,True,@ Sassuolo,29/11,0.34,0.11,29,11,,91,7.15,7.099,6.4,7.13,6.915,1.96,1.1,gol+quote,0.364,57,22,21,2026-11-29T14:00:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~4.6 · con un gol (29%) ~9.1 · con un assist (11%) ~6.1.
+Hojlund,Napoli,A,True,@ Sassuolo,29/11,0.36,0.11,30,11,,83,7.22,7.162,6.4,7.17,6.922,2.0,1.14,gol+quote,0.36,57,21,21,2026-11-29T14:00:00Z,,,Alta,6.1,"Pallino (1-10): senza bonus ~4.6 · con un gol (30%) ~9.1 · con un assist (11%) ~6.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-De Ketelaere,Atalanta,A,True,@ Lecce,30/11,0.25,0.12,22,11,,91,6.89,6.85,6.0,6.89,6.915,1.78,1.24,gol+quote,0.234,50,23,27,2026-11-30T17:30:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~4.6 · con un gol (22%) ~9.1 · con un assist (11%) ~6.1.
+De Ketelaere,Atalanta,A,True,@ Lecce,30/11,0.29,0.13,25,12,,91,6.99,6.951,6.1,6.98,6.922,1.78,1.24,gol+quote,0.234,50,23,27,2026-11-30T17:30:00Z,,,Alta,6.7,"Pallino (1-10): senza bonus ~4.6 · con un gol (25%) ~9.1 · con un assist (12%) ~6.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Yildiz,Juventus,A,False,@ Como,29/11,0.16,0.06,15,6,,11,6.49,6.521,5.4,6.87,6.915,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Bassa,0.6,"Pallino (1-10): senza bonus ~4.6 · con un gol (15%) ~9.1 · con un assist (6%) ~6.1.
+Yildiz,Juventus,A,False,@ Como,29/11,0.15,0.06,14,6,,8,6.44,6.466,5.3,6.89,6.922,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Bassa,0.6,"Pallino (1-10): senza bonus ~4.6 · con un gol (14%) ~9.1 · con un assist (6%) ~6.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Maldini,Cagliari,A,True,vs AC Milan,30/11,0.28,0.08,25,8,,91,6.85,6.904,5.9,6.86,6.915,0.96,1.74,gol+quote,-0.351,21,24,56,2026-11-30T19:45:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~4.6 · con un gol (25%) ~9.1 · con un assist (8%) ~6.1.
+Maldini,Cagliari,A,True,vs AC Milan,30/11,0.27,0.08,24,7,,91,6.83,6.882,5.9,6.84,6.922,0.96,1.76,gol+quote,-0.358,20,23,56,2026-11-30T19:45:00Z,,,Alta,6.7,"Pallino (1-10): senza bonus ~4.6 · con un gol (24%) ~9.1 · con un assist (7%) ~6.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Stulic,Lecce,A,True,vs Atalanta BC,30/11,0.21,0.08,19,8,,57,6.66,6.696,5.6,6.77,6.915,1.24,1.78,gol+quote,-0.234,27,23,50,2026-11-30T17:30:00Z,,,Media,2.8,"Pallino (1-10): senza bonus ~4.6 · con un gol (19%) ~9.1 · con un assist (8%) ~6.1.
+Stulic,Lecce,A,True,vs Atalanta BC,30/11,0.23,0.09,21,9,,61,6.73,6.769,5.7,6.81,6.922,1.24,1.78,gol+quote,-0.234,27,23,50,2026-11-30T17:30:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~4.6 · con un gol (21%) ~9.1 · con un assist (9%) ~6.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Lobotka,Napoli,C,True,@ Sassuolo,29/11,0.16,0.1,15,9,,91,6.59,6.532,6.2,6.57,6.423,1.96,1.1,gol+quote,0.364,57,22,21,2026-11-29T14:00:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~5.3 · con un gol (15%) ~9.8 · con un assist (9%) ~6.8.
+Laurientè,Sassuolo,A,True,vs Napoli,29/11,0.22,0.09,19,8,,91,6.64,6.691,5.6,6.66,6.922,1.14,2.0,gol+quote,-0.36,21,21,57,2026-11-29T14:00:00Z,,,Alta,6.7,"Pallino (1-10): senza bonus ~4.6 · con un gol (19%) ~9.1 · con un assist (8%) ~6.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Laurientè,Sassuolo,A,True,vs Napoli,29/11,0.17,0.08,16,8,,91,6.49,6.542,5.4,6.53,6.915,1.1,1.96,gol+quote,-0.364,21,22,57,2026-11-29T14:00:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~4.5 · con un gol (16%) ~9.0 · con un assist (8%) ~6.0.
+Pulisic,Milan,C,True,@ Cagliari,30/11,0.21,0.09,19,9,,68,6.7,6.644,6.3,6.63,6.474,1.76,0.96,gol+quote,0.358,56,23,20,2026-11-30T19:45:00Z,,,Media,5.0,"Pallino (1-10): senza bonus ~5.2 · con un gol (19%) ~9.7 · con un assist (9%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Cristante,Roma,C,True,vs Monza,29/11,0.13,0.11,13,10,,68,6.54,6.437,6.2,6.51,6.423,2.86,0.82,gol+quote,0.713,79,13,8,2026-11-29T17:00:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.3 · con un gol (13%) ~9.8 · con un assist (10%) ~6.8.
+Wesley,Roma,D,True,vs Monza,29/11,0.04,0.25,4,22,44.0,76,6.66,6.557,6.6,6.57,6.257,2.86,0.82,gol+quote,0.713,79,13,8,2026-11-29T17:00:00Z,,,Media,5.6,"Pallino (1-10): senza bonus ~5.9 · con un gol (4%) ~10.0 · con un assist (22%) ~7.4.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Mancini,Roma,D,True,vs Monza,29/11,0.06,0.12,6,11,44.0,80,6.57,6.464,6.5,6.51,6.266,2.86,0.82,gol+quote,0.713,79,13,8,2026-11-29T17:00:00Z,,,Media,3.9,"Pallino (1-10): senza bonus ~5.9 · con un gol (6%) ~10.0 · con un assist (11%) ~7.4.
+Lobotka,Napoli,C,True,@ Sassuolo,29/11,0.16,0.1,15,9,,61,6.61,6.556,6.2,6.56,6.474,2.0,1.14,gol+quote,0.36,57,21,21,2026-11-29T14:00:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~5.2 · con un gol (15%) ~9.7 · con un assist (9%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Pulisic,Milan,C,True,@ Cagliari,30/11,0.16,0.11,14,10,,57,6.55,6.498,6.2,6.5,6.423,1.74,0.96,gol+quote,0.351,56,24,21,2026-11-30T19:45:00Z,,,Media,2.8,"Pallino (1-10): senza bonus ~5.3 · con un gol (14%) ~9.8 · con un assist (10%) ~6.8.
+Cristante,Roma,C,True,vs Monza,29/11,0.14,0.12,13,11,,76,6.58,6.471,6.2,6.55,6.474,2.86,0.82,gol+quote,0.713,79,13,8,2026-11-29T17:00:00Z,,,Media,5.6,"Pallino (1-10): senza bonus ~5.2 · con un gol (13%) ~9.7 · con un assist (11%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Wesley,Roma,D,True,vs Monza,29/11,0.06,0.16,6,15,44.0,68,6.61,6.503,6.5,6.5,6.266,2.86,0.82,gol+quote,0.713,79,13,8,2026-11-29T17:00:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.9 · con un gol (6%) ~10.0 · con un assist (15%) ~7.4.
+Orsolini,Bologna,C,False,@ Venezia,27/11,0.15,0.07,14,7,,45,6.51,6.493,6.1,6.49,6.474,1.4,1.1,gol+quote,0.142,44,27,30,2026-11-27T19:45:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.2 · con un gol (14%) ~9.7 · con un assist (7%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Orsolini,Bologna,C,False,@ Venezia,27/11,0.15,0.09,14,8,,45,6.5,6.479,6.1,6.46,6.423,1.42,1.1,gol+quote,0.151,44,26,29,2026-11-27T19:45:00Z,,,Media,2.2,"Pallino (1-10): senza bonus ~5.3 · con un gol (14%) ~9.8 · con un assist (8%) ~6.8.
+Ramon,Como,D,True,vs Juventus,29/11,0.12,0.05,11,5,31.0,91,6.51,6.487,6.4,6.49,6.257,1.58,1.18,gol+quote,0.181,47,25,28,2026-11-29T19:45:00Z,,,Alta,6.7,"Pallino (1-10): senza bonus ~5.7 · con un gol (11%) ~10.0 · con un assist (5%) ~7.2.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Liberali,Como,C,True,vs Juventus,29/11,0.11,0.07,11,7,,23,6.39,6.365,6.0,6.42,6.423,1.58,1.18,gol+quote,0.181,47,25,28,2026-11-29T19:45:00Z,,,Bassa,1.1,"Pallino (1-10): senza bonus ~5.3 · con un gol (11%) ~9.8 · con un assist (7%) ~6.8.
+Liberali,Como,C,True,vs Juventus,29/11,0.12,0.07,11,7,,38,6.42,6.397,5.9,6.46,6.474,1.58,1.18,gol+quote,0.181,47,25,28,2026-11-29T19:45:00Z,,,Media,2.8,"Pallino (1-10): senza bonus ~5.2 · con un gol (11%) ~9.7 · con un assist (7%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Miranda J.,Bologna,D,True,@ Venezia,27/11,0.05,0.17,5,16,33.0,80,6.43,6.407,6.2,6.4,6.266,1.42,1.1,gol+quote,0.151,44,26,29,2026-11-27T19:45:00Z,,,Media,3.9,"Pallino (1-10): senza bonus ~5.7 · con un gol (5%) ~10.0 · con un assist (16%) ~7.2.
+Mancini,Roma,D,True,vs Monza,29/11,0.04,0.09,4,9,44.0,68,6.5,6.394,6.4,6.42,6.257,2.86,0.82,gol+quote,0.713,79,13,8,2026-11-29T17:00:00Z,,,Media,5.0,"Pallino (1-10): senza bonus ~5.9 · con un gol (4%) ~10.0 · con un assist (9%) ~7.4.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Bernabè,Parma,C,True,@ Frosinone,28/11,0.12,0.09,11,9,,68,6.33,6.396,5.9,6.36,6.423,1.18,2.38,gol+quote,-0.465,17,19,64,2026-11-28T14:00:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.3 · con un gol (11%) ~9.8 · con un assist (9%) ~6.8.
+Bernabè,Parma,C,True,@ Frosinone,28/11,0.11,0.09,11,8,,53,6.32,6.386,5.8,6.39,6.474,1.18,2.38,gol+quote,-0.465,17,19,64,2026-11-28T14:00:00Z,,,Media,3.9,"Pallino (1-10): senza bonus ~5.2 · con un gol (11%) ~9.7 · con un assist (8%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Ramon,Como,D,True,vs Juventus,29/11,0.07,0.05,7,5,31.0,91,6.36,6.336,6.1,6.35,6.266,1.58,1.18,gol+quote,0.181,47,25,28,2026-11-29T19:45:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~5.7 · con un gol (7%) ~10.0 · con un assist (5%) ~7.2.
+Miranda J.,Bologna,D,True,@ Venezia,27/11,0.04,0.19,4,17,33.0,76,6.42,6.396,6.2,6.38,6.257,1.4,1.1,gol+quote,0.142,44,27,30,2026-11-27T19:45:00Z,,,Media,5.6,"Pallino (1-10): senza bonus ~5.8 · con un gol (4%) ~10.0 · con un assist (17%) ~7.3.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Conceicao,Juventus,C,True,@ Como,29/11,0.1,0.09,10,8,,80,6.31,6.333,5.8,6.33,6.423,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Media,3.9,"Pallino (1-10): senza bonus ~5.3 · con un gol (10%) ~9.8 · con un assist (8%) ~6.8.
+Conceicao,Juventus,C,True,@ Como,29/11,0.09,0.08,9,7,,53,6.27,6.295,5.7,6.36,6.474,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Media,3.9,"Pallino (1-10): senza bonus ~5.2 · con un gol (9%) ~9.7 · con un assist (7%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Alajbegovic,Juventus,C,True,@ Como,29/11,0.08,0.09,8,8,,68,6.25,6.282,5.7,6.31,6.423,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.3 · con un gol (8%) ~9.8 · con un assist (8%) ~6.8.
+Alajbegovic,Juventus,C,True,@ Como,29/11,0.09,0.08,9,7,,76,6.27,6.299,5.7,6.32,6.474,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Media,5.6,"Pallino (1-10): senza bonus ~5.2 · con un gol (9%) ~9.7 · con un assist (7%) ~6.7.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Badiashile,Napoli,D,True,@ Sassuolo,29/11,0.05,0.06,5,6,33.0,45,6.35,6.297,6.1,6.31,6.266,1.96,1.1,gol+quote,0.364,57,22,21,2026-11-29T14:00:00Z,,,Media,2.2,"Pallino (1-10): senza bonus ~5.7 · con un gol (5%) ~10.0 · con un assist (6%) ~7.2.
+Badiashile,Napoli,D,True,@ Sassuolo,29/11,0.05,0.07,5,6,32.0,30,6.34,6.291,6.1,6.28,6.257,2.0,1.14,gol+quote,0.36,57,21,21,2026-11-29T14:00:00Z,,,Media,2.2,"Pallino (1-10): senza bonus ~5.7 · con un gol (5%) ~10.0 · con un assist (6%) ~7.2.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Gabbia,Milan,D,True,@ Cagliari,30/11,0.04,0.05,4,5,38.0,23,6.36,6.304,6.1,6.29,6.266,1.74,0.96,gol+quote,0.351,56,24,21,2026-11-30T19:45:00Z,,,Bassa,1.1,"Pallino (1-10): senza bonus ~5.8 · con un gol (4%) ~10.0 · con un assist (5%) ~7.3.
+Gabbia,Milan,D,True,@ Cagliari,30/11,0.03,0.04,3,4,38.0,15,6.33,6.28,6.1,6.27,6.257,1.76,0.96,gol+quote,0.358,56,23,20,2026-11-30T19:45:00Z,,,Bassa,1.1,"Pallino (1-10): senza bonus ~5.8 · con un gol (3%) ~10.0 · con un assist (4%) ~7.3.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Diego Carlos,Parma,D,True,@ Frosinone,28/11,0.05,0.06,5,6,9.0,68,6.11,6.18,5.8,6.16,6.266,1.18,2.38,gol+quote,-0.465,17,19,64,2026-11-28T14:00:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.5 · con un gol (5%) ~10.0 · con un assist (6%) ~7.0.
+Diego Carlos,Parma,D,True,@ Frosinone,28/11,0.04,0.06,4,6,9.0,45,6.09,6.156,5.7,6.18,6.257,1.18,2.38,gol+quote,-0.465,17,19,64,2026-11-28T14:00:00Z,,,Media,3.3,"Pallino (1-10): senza bonus ~5.6 · con un gol (4%) ~10.0 · con un assist (6%) ~7.1.
 Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Lucumì,Juventus,D,True,@ Como,29/11,0.04,0.04,3,4,21.0,80,6.11,6.142,5.8,6.15,6.266,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Media,3.9,"Pallino (1-10): senza bonus ~5.6 · con un gol (3%) ~10.0 · con un assist (4%) ~7.1.
-Voto giornalista + bonus: senza bonus ~6.0 · con un gol ~7.3 + 3 = 10.3 · con un assist ~6.7 + 1 = 7.7.
+Lucumì,Juventus,D,True,@ Como,29/11,0.03,0.04,3,4,21.0,76,6.08,6.105,5.7,6.12,6.257,1.18,1.58,gol+quote,-0.181,28,25,47,2026-11-29T19:45:00Z,,,Media,5.6,"Pallino (1-10): senza bonus ~5.6 · con un assist (4%) ~7.1.
+Voto giornalista + bonus: senza bonus ~6.0 · con un assist ~6.7 + 1 = 7.7.
 Fortuna di stagione: non disponibile (modalità senza Understat).",,
-Maignan,Milan,P,True,@ Cagliari,30/11,0.0,0.0,0,0,38.0,100,5.28,5.231,7.0,5.28,4.632,1.74,0.96,gol+quote,0.351,56,24,21,2026-11-30T19:45:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~6.9.
+Maignan,Milan,P,True,@ Cagliari,30/11,0.0,0.0,0,0,38.0,100,5.28,5.231,7.0,5.28,4.586,1.76,0.96,gol+quote,0.358,56,23,20,2026-11-30T19:45:00Z,,,Alta,6.7,"Pallino (1-10): senza bonus ~7.0.
 Voto giornalista + bonus: senza bonus ~6.0.
 Fortuna di stagione: non calcolata per i portieri.",,
-Torriani,Milan,P,True,@ Cagliari,30/11,0.0,0.01,0,1,38.0,0,5.28,5.232,7.0,4.63,4.632,1.74,0.96,gol+quote,0.351,56,24,21,2026-11-30T19:45:00Z,,,Bassa,0.0,"Pallino (1-10): senza bonus ~6.9.
+Torriani,Milan,P,True,@ Cagliari,30/11,0.0,0.0,0,0,38.0,0,5.28,5.231,7.0,4.59,4.586,1.76,0.96,gol+quote,0.358,56,23,20,2026-11-30T19:45:00Z,,,Bassa,0.0,"Pallino (1-10): senza bonus ~7.0.
 Voto giornalista + bonus: senza bonus ~6.0.
 Fortuna di stagione: non calcolata per i portieri.",,nessuna presenza in stagione
-Falcone,Lecce,P,True,vs Atalanta BC,30/11,0.0,0.0,0,0,17.0,100,4.24,4.276,5.4,4.24,4.632,1.24,1.78,gol+quote,-0.234,27,23,50,2026-11-30T17:30:00Z,,,Media,4.4,"Pallino (1-10): senza bonus ~5.5.
+Falcone,Lecce,P,True,vs Atalanta BC,30/11,0.0,0.0,0,0,17.0,100,4.25,4.281,5.5,4.25,4.586,1.24,1.78,gol+quote,-0.234,27,23,50,2026-11-30T17:30:00Z,,,Alta,6.7,"Pallino (1-10): senza bonus ~5.5.
 Voto giornalista + bonus: senza bonus ~6.0.
 Fortuna di stagione: non calcolata per i portieri.",,
