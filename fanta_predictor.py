@@ -26,6 +26,7 @@ import json
 import math
 import os
 import re
+import socket
 import sys
 import time
 import unicodedata
@@ -94,7 +95,7 @@ CFG = {
     "result_beta_prior": 0.15,
     "result_beta_shrink": 60,
     "tz": "Europe/Rome",
-    "version": "20/10 - fasce percentuali Fantacalcio.it",
+    "version": "22/09 - forma recente e taratura",
     "cache_hours": 12,
 }
 
@@ -835,6 +836,8 @@ def _fortuna_line(role, entry, stato):
     if role == "P":
         return "Fortuna di stagione: non calcolata per i portieri."
     half = CFG["mercato_luck_soglia"] / 2          # stessa soglia con cui il Mercato elenca i TUOI giocatori
+    if stato == "fallback":
+        return "Fortuna di stagione: non disponibile (modalit\u00e0 senza Understat)."
     if stato == "assente":
         return ("Fortuna di stagione: non ancora disponibile (il riepilogo del Mercato non è ancora stato creato: "
                 "comparirà dopo il prossimo aggiornamento completo).")
@@ -1041,18 +1044,193 @@ def build_reminders(status, rno, now, kickoff):
     return rem
 
 
+# ============================================================== RIPIEGO SENZA UNDERSTAT ====
+# Se Understat non risponde (manutenzione, blocco...) il modello non si ferma: usa le QUOTE dei bookmaker per forza delle
+# squadre e calendario, e il file statistiche di Fantacalcio.it (gol e assist reali, presenze) per i giocatori.
+# E' meno preciso dell'xG: la pagina lo dice chiaramente. Quando Understat torna, si riprende da solo il modello completo.
+FB_MIN = 75.0           # minuti medi per presenza (il file Fantacalcio.it non ha i minuti)
+FB_SHRINK_MULT = 1.5    # [EURISTICA] i gol veri sono piu' rumorosi dell'xG: ristringo di piu' verso la media del ruolo
+POS_FC = {"P": "GK", "D": "D", "C": "M", "A": "F"}
+
+
+def understat_alive(timeout=20):
+    """Controllo rapido (pochi secondi): Understat risponde e non mostra la pagina di manutenzione? -> (ok, motivo)"""
+    try:
+        req = urllib.request.Request("https://understat.com/league/Serie_A",
+                                     headers={"User-Agent": "Mozilla/5.0 (fanta-predictor)"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            status, body = r.status, r.read(300000).decode("utf-8", "ignore").lower()
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {str(e)[:80]}"
+    if status != 200:
+        return False, f"HTTP {status}"
+    if "come back soon" in body or "coming back soon" in body or "under maintenance" in body:
+        return False, "pagina di manutenzione"
+    if len(body) < 3000:
+        return False, "risposta troppo breve"
+    return True, "ok"
+
+
+class FallbackProvider:
+    """Stessa interfaccia di UnderstatProvider (matches/teams/players), ma costruita da quote + statistiche Fantacalcio.it."""
+    fallback = True
+
+    def __init__(self, odds_events, fc_df, fc_name, season, cal_path=None, now_utc=None, round_hint=0, why=""):
+        self.fc, self.fc_name, self.season, self.cal_path = fc_df, fc_name, season, cal_path
+        self.round_hint, self.why = int(round_hint or 0), why
+        self.now_utc = now_utc or datetime.now(ZoneInfo("UTC")).replace(tzinfo=None)
+        fc_teams = sorted(fc_df.squadra_fc.astype(str).unique())
+        self.games = {t: int(fc_df.loc[fc_df.squadra_fc == t, "Pv"].max()) for t in fc_teams}
+        self.played = int(np.median(list(self.games.values()))) if self.games else 0
+        self.round_guessed = False
+        self._calendar(odds_events)
+        self._teams(fc_teams)
+
+    # -- calendario: eventi delle quote, ricordati su file cosi' le partite gia' iniziate non spariscono -----------------
+    def _calendar(self, events):
+        stored = []
+        if self.cal_path and Path(self.cal_path).exists():
+            try:
+                stored = json.loads(Path(self.cal_path).read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                stored = []
+        by_id = {m["id"]: m for m in stored}
+        for ev in events or []:
+            try:
+                dt = datetime.fromisoformat(str(ev["commence_time"]).replace("Z", "+00:00")).astimezone(ZoneInfo("UTC")).replace(tzinfo=None)
+                by_id[ev["id"]] = {"id": ev["id"], "h": ev["home_team"], "a": ev["away_team"],
+                                   "dt": dt.strftime("%Y-%m-%d %H:%M:%S"), "round": (by_id.get(ev["id"]) or {}).get("round")}
+            except Exception:  # noqa: BLE001
+                continue
+        limit = (self.now_utc - timedelta(days=4)).strftime("%Y-%m-%d %H:%M:%S")
+        ms = sorted((m for m in by_id.values() if m["dt"] >= limit), key=lambda m: m["dt"])
+        groups, cur, seen = [], [], set()
+        for m in ms:                                    # stessa regola di split_rounds: nuova giornata quando una squadra si ripete
+            t = {m["h"], m["a"]}
+            if t & seen:
+                groups.append(cur)
+                cur, seen = [], set()
+            cur.append(m)
+            seen |= t
+        if cur:
+            groups.append(cur)
+        prev = None
+        for g in groups:
+            known = [m["round"] for m in g if m.get("round")]
+            if known:
+                r = max(set(known), key=known.count)
+            elif prev is not None:
+                r = prev + 1
+            elif self.round_hint:
+                r = self.round_hint
+            else:                                       # prima volta: stimo dalle partite giocate nel file Fantacalcio.it
+                r, self.round_guessed = self.played + 1, True
+            for m in g:
+                m["round"] = r
+            prev = r
+        self.ms = ms
+        self.round_by_id = {m["id"]: m["round"] for m in ms}
+        if self.cal_path:
+            try:
+                Path(self.cal_path).write_text(json.dumps(ms, ensure_ascii=False, indent=1), encoding="utf-8")
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! calendario di ripiego non salvato ({e})")
+
+    def _teams(self, fc_teams):
+        self.titles = sorted({m["h"] for m in self.ms} | {m["a"] for m in self.ms})
+        self.team_of = {t: (resolve_team(t, self.titles) or t) for t in fc_teams}
+        fc = self.fc
+        gf = fc.groupby("squadra_fc").Gf.sum()
+        gs = fc[fc.ruolo_fc == "P"].groupby("squadra_fc").Gs.sum()
+        tot_games = max(sum(self.games.values()), 1)
+        lg = max(float(gf.sum()) / tot_games, 0.5)
+        self.hist = {}
+        for t, title in self.team_of.items():
+            n = max(self.games.get(t, 0), 1)
+            xg, xga = (float(gf.get(t, 0)) / n, float(gs.get(t, 0)) / n) if self.games.get(t, 0) else (lg, lg)
+            self.hist[title] = [{"date": (self.now_utc - timedelta(days=7 * (n - i))).strftime("%Y-%m-%d %H:%M:%S"),
+                                 "h_a": "h" if i % 2 == 0 else "a", "xG": xg, "xGA": xga} for i in range(max(n, 2))]
+        for title in self.titles:                       # squadra delle quote senza statistiche: valori medi
+            self.hist.setdefault(title, [{"date": self.now_utc.strftime("%Y-%m-%d %H:%M:%S"), "h_a": h, "xG": lg, "xGA": lg} for h in "ha"])
+        self.rec = {}
+        for r in fc.itertuples():
+            self.rec[f"fc{r.id_fc}"] = r._asdict()
+
+    # -- interfaccia come UnderstatProvider ------------------------------------------------------------------------------
+    def matches(self, season):
+        return [{"id": m["id"], "datetime": m["dt"], "isResult": False, "h": {"title": m["h"]}, "a": {"title": m["a"]}}
+                for m in self.ms]
+
+    def teams(self, season):
+        if season != self.season:
+            raise RuntimeError("stagione precedente non disponibile in modalita' di ripiego")
+        return {i: {"title": t, "history": h} for i, (t, h) in enumerate(self.hist.items())}
+
+    def players(self, season):
+        if season != self.season:
+            raise RuntimeError("stagione precedente non disponibile in modalita' di ripiego")
+        return [{"id": k, "player_name": r["nome_fc"], "team_title": self.team_of.get(r["squadra_fc"], r["squadra_fc"]),
+                 "position": POS_FC.get(r["ruolo_fc"], "M"), "time": float(r["Pv"]) * FB_MIN, "xG": float(r["Gf"]),
+                 "xA": float(r["AssReali"]), "xGBuildup": 0.0, "yellow_cards": float(r["AmmReali"]),
+                 "red_cards": float(r["EspReali"])} for k, r in self.rec.items()]
+
+    def player_matches(self, pid):
+        return []
+
+    # -- giocatore: tassi da gol/assist reali ristretti verso la media del ruolo, titolarita' dalle presenze ----------------
+    def profile(self, pid, role, priors, tune=None):
+        rec = self.rec[str(pid)]
+        pr = priors[role]
+        K = float((((tune or {}).get(role) or {}).get("shrink")) or CFG["player_shrink_90s"]) * FB_SHRINK_MULT
+        pv = float(rec["Pv"])
+        s90 = pv * FB_MIN / 90.0
+        G = max(self.games.get(str(rec["squadra_fc"]), 0), 1)
+        share = min(1.0, pv / G) if pv > 0 else 0.0
+        if role == "P":
+            p_start, p_sub = share, 0.0
+        else:
+            p_start, p_sub = 0.85 * share, 0.15 * share
+        return {"n_matches": int(pv), "trend": None, "eff90": s90 / FB_SHRINK_MULT,
+                "xg90": (float(rec["Gf"]) + K * pr["xG"]) / (s90 + K),
+                "xa90": (float(rec["AssReali"]) + K * pr["xA"]) / (s90 + K),
+                "bu90": pr["xGBuildup"], "z_bu": 0.0,
+                "yc90": (float(rec["AmmReali"]) + 10 * pr["yellow_cards"]) / (s90 + 10),
+                "rc90": (float(rec["EspReali"]) + 10 * pr["red_cards"]) / (s90 + 10),
+                "p_start": p_start, "p_sub": p_sub, "exp_min": 60.0 + 25.0 * share}
+
+    def round_of(self, fixtures):
+        return self.round_by_id.get(fixtures[0].get("id"), 0) if fixtures else 0
+
+    def banner(self, rno):
+        b = [f"Understat non \u00e8 raggiungibile ({self.why or 'nessuna risposta'}): le previsioni usano le quote dei bookmaker e le "
+             "statistiche di Fantacalcio.it. Sono meno precise del solito.",
+             "Per i giocatori uso gol e assist reali al posto dell'xG, la titolarit\u00e0 \u00e8 stimata dalle presenze in stagione e non c'\u00e8 la "
+             "freccia di forma: le probabili formazioni che incolli contano pi\u00f9 del solito.",
+             f"Statistiche Fantacalcio.it ({self.fc_name or 'file'}) ferme alla giornata {self.played}"
+             + (f": ricarica il file aggiornato in statistiche/." if rno and rno - self.played > 1 else ".")]
+        if self.round_guessed:
+            b.append(f"Il numero di giornata ({rno}) \u00e8 una stima: se \u00e8 sbagliato avvia con --giornata-ripiego N.")
+        return b
+
+
 # ============================================================== PIPELINE ====
 def run(prov, roster, season, now, check_only=False, round_no=None, backtest=False,
         odds_events=None, calib=None, odds_note=None, inj_key=None,
         inj_site="api-football.com", tune=None, mercato_summary=None):
     print(f"Stagione Understat: {season}/{str(season + 1)[-2:]}   -   {now:%d/%m/%Y %H:%M}")
     print("Scarico dati squadre e giocatori...")
+    is_fb = bool(getattr(prov, "fallback", False))
     matches_all = prov.matches(season)
     if round_no:
         rno, fixtures = round_no, get_round(matches_all, round_no)
     else:
         rno, fixtures = current_round(matches_all, now)
+        if is_fb and fixtures:
+            rno = prov.round_of(fixtures)
     if not fixtures:
+        if is_fb:
+            sys.exit("Modalita' di ripiego: nel calendario delle quote non c'e' ancora la prossima giornata "
+                     "(i bookmaker la pubblicano pochi giorni prima). Riprovo al prossimo aggiornamento.")
         sys.exit("Nessuna partita trovata su Understat per la giornata richiesta "
                  "(stagione finita, non ancora pubblicata o numero errato).")
     cutoff = datetime.fromisoformat(fixtures[0]["datetime"]) if backtest else None
@@ -1074,7 +1252,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
     cards_all = pd.concat([pcur, pold]).groupby("id").agg(time=("time", "sum"), y=("yellow_cards", "sum"),
                                                           r=("red_cards", "sum"))
     titles = list(hist.keys())
-    off = (calib or {}).get("offset", {})
+    off = {} if is_fb else (calib or {}).get("offset", {})      # la correzione e' tarata sul modello con xG: in ripiego non vale
     beta = float((calib or {}).get("result_beta", CFG["result_beta_prior"]))
     baseline = season_baseline(pcur, priors, S, lg) if not check_only else []
 
@@ -1144,13 +1322,19 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             nota = "nessun dato Understat: usa lo slider"
         else:
             try:
-                pm = prov.player_matches(hit.id)
-                if backtest:
+                if is_fb:
+                    prof = prov.profile(hit.id, role, priors, tune)
+                    nota = "nessuna presenza in stagione" if prof["p_start"] + prof["p_sub"] == 0 else ""
+                    pm = None
+                else:
+                    pm = prov.player_matches(hit.id)
+                if pm is not None and backtest:
                     pm = [x for x in pm if str(x["date"])[:10] < cutoff.strftime("%Y-%m-%d")]
-                prof = player_profile(pm, team, hist, role, priors, cards_all.loc[hit.id].to_dict()
-                                      if hit.id in cards_all.index else None, tune)
-                nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
-                        "affidabilit\u00e0 bassa" if reliability_label(prof["eff90"]) == "Bassa" else "")
+                if pm is not None:
+                    prof = player_profile(pm, team, hist, role, priors, cards_all.loc[hit.id].to_dict()
+                                          if hit.id in cards_all.index else None, tune)
+                    nota = ("nessuna presenza recente" if prof["p_start"] + prof["p_sub"] == 0 else
+                            "affidabilit\u00e0 bassa" if reliability_label(prof["eff90"]) == "Bassa" else "")
             except Exception as e:  # noqa: BLE001
                 # un problema di rete/dati su UN giocatore non deve fermare tutti gli altri: ripiego
                 # sulla media del ruolo per lui soltanto, e lo segnalo chiaramente.
@@ -1179,7 +1363,9 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
         odds = odds_map.get((team, opp) if home else (opp, team))
         ctx = team_ctx(team, opp, home, S, lg, hf, af, odds)
         pj = project(role, prof, ctx, refs[role], off.get(role, 0.0), beta)
-        if mercato_summary is None:
+        if is_fb:
+            m_entry, m_stato = None, "fallback"
+        elif mercato_summary is None:
             m_entry, m_stato = None, "assente"
         elif hit is None:
             m_entry, m_stato = None, "non_riconosciuto"
@@ -1195,7 +1381,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
             "Titolare%": round(100 * pj["p_eff"]),
             "Fantavoto": round(pj["fv"], 2), "FV_raw": round(pj["fv_raw"], 3),
             "Voto": round(pj["rating"], 1), "EV": round(pj["ev"], 2), "Rif": round(refs[role] + off.get(role, 0.0), 3),
-            "GolSq": round(ctx["lam_for"], 2), "GolOpp": round(ctx["lam_conc"], 2), "Fonte": ctx["src"],
+            "GolSq": round(ctx["lam_for"], 2), "GolOpp": round(ctx["lam_conc"], 2), "Fonte": ctx["src"].replace("xG", "gol") if is_fb else ctx["src"],
             "Res": round(pj["res"], 3), "P_V": round(100 * ctx["pv"]), "P_N": round(100 * ctx["pn"]), "P_S": round(100 * ctx["ps"]),
             "KO": raw_dt.replace(" ", "T") + "Z",
             "Trend": (prof.get("trend") or {}).get("arrow", ""),
@@ -1224,7 +1410,7 @@ def run(prov, roster, season, now, check_only=False, round_no=None, backtest=Fal
         inj_msg += f" - {n_inj} segnalazioni sulla tua rosa" if inj_msg != "attivi" else f" ({n_inj} segnalazioni sulla tua rosa)"
     kicks = [{"t": m["datetime"].replace(" ", "T") + "Z", "m": f"{m['h']['title']}-{m['a']['title']}"} for m in fixtures]
     info = {"rno": rno, "odds": len(odds_map), "partite": len(fixtures), "odds_msg": odds_msg, "inj_msg": inj_msg,
-            "kicks": kicks, "baseline": baseline}
+            "kicks": kicks, "baseline": baseline, "fallback": prov.banner(rno) if is_fb else None}
     if check_only:
         return None, None, problems, info
     return pd.DataFrame(rows), fixtures, problems, info
@@ -1256,8 +1442,7 @@ _UPD = re.compile(r"ultimo aggiornamento\s+(\d{2})/(\d{2})/(\d{4})\s*-\s*(\d{1,2
 def parse_fc_text(text):
     """Legge il testo copiato da Fantacalcio.it (stesso formato del lettore nella pagina).
     Ritorna una lista di partite: home, away, updated (ora italiana), entries per squadra, out, doubt."""
-    L = [x.strip() for x in text.replace("\u00a0", " ").splitlines()]
-    L = [x for x in L if x]          # copiando da telefono compaiono righe vuote tra una riga e l'altra
+    L = [x.strip() for x in text.splitlines()]
     n, k, pending, upd, out = len(L), 0, [], None, []
     while k < n:
         if k + 1 < n and _MOD.match(L[k + 1]) and L[k] and not _PCT.match(L[k]) and not _MOD.match(L[k]):
@@ -1286,8 +1471,7 @@ def parse_fc_text(text):
             upd = datetime(y, mo, d, hh, mi)
         if re.match(r"(?i)^dettaglio calciatori", L[k]):
             j, cur, o_names, d_names = k + 1, None, [], []
-            while (j < n and not re.match(r"(?i)^(stemma|campioncino|sky logo|fluid logo|probabili formazioni)\b", L[j])
-                   and not (j + 1 < n and (_MOD.match(L[j + 1]) or re.match(r"(?i)^stemma\b", L[j + 1])))):
+            while j < n and not re.match(r"(?i)^(stemma|campioncino)\b", L[j]) and not (j + 1 < n and _MOD.match(L[j + 1])):
                 t = L[j]
                 hm = re.match(r"(?i)^(ballottaggi|squalificati|diffidati|infortunati|in dubbio)$", t)
                 if hm:
@@ -1337,7 +1521,7 @@ def _roster_players(raw):
 
 
 def _bucket(p):
-    for lo, hi in ((100, 100), (80, 99), (60, 79), (50, 59), (30, 49), (10, 29), (0, 9)):
+    for lo, hi in ((100, 100), (60, 99), (50, 59), (30, 49), (10, 29), (0, 9)):
         if lo <= p <= hi:
             return lo, hi
     return 0, 9
@@ -1658,6 +1842,12 @@ def _calibra_votes(storico_dir, voti_path, out_json, lookup=None):
 
 def calibra(storico_dir, voti_path, out_json, fc_dir=None, prov=None, season=None, roster=None):
     lookup = None
+    prev = {}
+    try:
+        if Path(out_json).exists():
+            prev = json.loads(Path(out_json).read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        prev = {}
     if prov is not None and season:
         try:
             lookup = _result_lookup(prov, season)
@@ -1688,6 +1878,13 @@ def calibra(storico_dir, voti_path, out_json, fc_dir=None, prov=None, season=Non
         else:
             print("Fantacalcio.it: nessuna partita conclusa con un testo salvato in formazioni/ (copiato prima del calcio d'inizio).")
         Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+    keep = (["result_beta"] if lookup is None else []) + (["fc", "fc_map"] if prov is None else [])
+    kept = [k for k in keep if k not in out and k in prev]
+    if kept:                                   # senza Understat non posso ricalcolarli: tengo le ultime stime buone
+        for k in kept:
+            out[k] = prev[k]
+        Path(out_json).write_text(json.dumps(out, indent=1), encoding="utf-8")
+        print(f"Understat non disponibile: conservati i valori precedenti di {', '.join(kept)}")
     return out
 
 
@@ -2037,6 +2234,7 @@ details summary{cursor:pointer;font-weight:600;font-size:14px}
 <h1>Fanta Predictor</h1>
 <div class="s" id="meta"></div>
 <div id="remind" class="card" style="display:none;border-left:3px solid #d97706"></div>
+<div id="fbnote" class="card" style="display:none;border-left:3px solid #dc2626"></div>
 <details class="card" id="statusdet"><summary>Stato dei dati</summary><div id="statuscard" class="s" style="margin-top:6px"></div></details>
 <details class="card" id="howdet"><summary>Come uso questa pagina per scegliere</summary>
   <div class="s" style="margin-top:6px">
@@ -2254,6 +2452,8 @@ tick(); setInterval(() => { tick(); update(); }, 60000);
 // ---------------- stato, promemoria, grafico affidabilita' ----------------
 if (D.reminders && D.reminders.length) { const R = document.getElementById("remind"); R.style.display = "block";
   R.appendChild(mk("b", null, "Da fare questa settimana")); D.reminders.forEach(t => R.appendChild(mk("div", "info", t))); }
+if (D.fallback && D.fallback.length) { const F = document.getElementById("fbnote"); F.style.display = "block";
+  F.appendChild(mk("b", null, "Modalit\u00e0 senza Understat")); D.fallback.forEach(t => F.appendChild(mk("div", "info", t))); }
 (function(){
   const s = D.status || {}, C = document.getElementById("statuscard");
   const line = t => C.appendChild(mk("div", null, t));
@@ -2265,6 +2465,7 @@ if (D.reminders && D.reminders.length) { const R = document.getElementById("remi
   line("Voti reali: ultima giornata registrata " + (s.voti_ultima != null ? s.voti_ultima : "nessuna"));
   line("Calibrazione: " + (s.calib || "mai calcolata") + (s.calib_n ? " (" + s.calib_n + " prestazioni)" : ""));
   line("Taratura: " + (s.tuning || "mai eseguita"));
+  line("Dati dei giocatori: " + (s.fonte || "Understat"));
 })();
 if (D.calib && D.calib.mae_per_giornata) { const m = D.calib.mae_per_giornata, gs = Object.keys(m).map(Number).sort((a,b)=>a-b);
   if (gs.length > 1) { const vals = gs.map(g => m[g]), w = 46, h = 60, gap = 10, W = gs.length * (w + gap) + gap, H = h + 34;
@@ -2380,7 +2581,7 @@ function applyLines(text, mode){
 const isMod = l => /^\d(?:-\d){1,3}$/.test(l || "");
 const isPct = l => /^\d{1,3}\s*%$/.test(l || "");
 function parseFantacalcio(text){
-  const L = text.replace(/\u00a0/g, " ").split(/\r?\n/).map(x => x.trim()).filter(Boolean), n = L.length, acts = new Map(), read = [];
+  const L = text.split(/\r?\n/).map(x => x.trim()), n = L.length, acts = new Map(), read = [];
   let pending = [], matches = 0, k = 0;
   const put = (s, p, out) => { const a = acts.get(s.Giocatore) || {s}; if (out) a.out = true; else a.p = p; acts.set(s.Giocatore, a); };
   while (k < n){
@@ -2400,7 +2601,7 @@ function parseFantacalcio(text){
     }
     if (/^dettaglio calciatori/i.test(L[k])) {
       const keys = pending.slice(-2).filter(Boolean), cand = S.filter(s => keys.includes(s.Squadra)); let j = k + 1, cur = null;
-      while (j < n && !/^(stemma|campioncino|sky logo|fluid logo|probabili formazioni)\b/i.test(L[j]) && !(j + 1 < n && (isMod(L[j+1]) || /^stemma\b/i.test(L[j+1])))) {
+      while (j < n && !/^(stemma|campioncino)\b/i.test(L[j]) && !(j + 1 < n && isMod(L[j+1]))) {
         const t = L[j], hm = t.match(/^(ballottaggi|squalificati|diffidati|infortunati|in dubbio)$/i);
         if (hm) cur = hm[1].toLowerCase();
         else if (cur && t && !/^nessun/i.test(t) && !/[,\d%]/.test(t) && t.length <= 32 && /^[A-Z\u00c0-\u00dd]/.test(t)) {
@@ -2484,6 +2685,7 @@ def to_html(df, fixtures, now, modules, problems=(), info=None, calib=None, stat
         "marginTh": CFG["lineup_margin_threshold"],
         "status": status or {},
         "reminders": list(reminders),
+        "fallback": info.get("fallback"),
     }
     data = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     return HTML_TEMPLATE.replace("__DATA__", data)
@@ -2592,12 +2794,23 @@ def main(argv=None):
                     help="con --giornata: ricostruisce la previsione usando solo dati precedenti a quella giornata")
     ap.add_argument("--giornata", default="", help="numero/i di giornata, es. 3 oppure 2,3 (con --backtest)")
     ap.add_argument("--no-odds", action="store_true", help="non usare le quote dei bookmaker")
+    ap.add_argument("--storico-ripiego", dest="storico_ripiego", default="storico_ripiego",
+                    help="previsioni salvate quando Understat non c'e' (tenute separate da quelle della calibrazione)")
+    ap.add_argument("--calendario-ripiego", dest="calendario_ripiego", default="calendario_ripiego.json",
+                    help="calendario ricordato dalle quote, usato solo senza Understat")
+    ap.add_argument("--giornata-ripiego", dest="giornata_ripiego", type=int, default=0,
+                    help="senza Understat: numero della prima giornata del calendario, se la stima automatica e' sbagliata")
     a = ap.parse_args(argv)
+    socket.setdefaulttimeout(40)       # mai piu' run da 16 minuti appesi su un sito che non risponde
 
     if a.mercato:
         n_ = datetime.now(ZoneInfo(CFG["tz"]))
         season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
         roster = load_roster(a.rosa)
+        ok_, why_ = understat_alive()
+        if not ok_:
+            print(f"Mercato: Understat non raggiungibile ({why_}). Lo salto e tengo il riepilogo precedente ({a.mercato_json}).")
+            return
         prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
         pcur = num(pd.DataFrame(prov.players(season)), ["time", "xG", "xA", "xGBuildup", "yellow_cards", "red_cards", "goals", "assists", "npg", "npxG"])
         pold = num(pd.DataFrame(prov.players(season - 1)), ["time", "xG", "xA", "xGBuildup", "yellow_cards", "red_cards"])
@@ -2644,6 +2857,9 @@ def main(argv=None):
             n_ = datetime.now(ZoneInfo(CFG["tz"]))
             season = a.season or (n_.year if n_.month >= 7 else n_.year - 1)
             roster = load_roster(a.rosa)
+            ok_, why_ = understat_alive()
+            if not ok_:
+                raise ConnectionError(why_)
             prov = UnderstatProvider(hours=CFG["cache_hours"], refresh=a.refresh)
         except Exception as e:  # noqa: BLE001
             prov = None
@@ -2714,18 +2930,45 @@ def main(argv=None):
             print(f"  ! {a.mercato_json} non leggibile: la fortuna nel ⓘ non sara' disponibile")
     else:
         print(f"Riepilogo Mercato ({a.mercato_json}) non trovato: la fortuna nel ⓘ comparira' dopo il primo --mercato")
-    df, fixtures, problems, info = run(prov, roster, season, now, check_only=a.check, calib=calib,
-                                       odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site,
-                                       tune=tune, mercato_summary=mercato_summary)
+    def go(p):
+        return run(p, roster, season, now, check_only=a.check, calib=calib,
+                   odds_events=odds_events, odds_note=odds_note, inj_key=inj_key, inj_site=inj_site,
+                   tune=tune, mercato_summary=mercato_summary)
+
+    use_fb, why = False, ""
+    alive, why = understat_alive()
+    if alive:
+        try:
+            df, fixtures, problems, info = go(prov)
+        except (RuntimeError, OSError) as e:
+            use_fb, why = True, f"{type(e).__name__}: {str(e)[:90]}"
+    else:
+        use_fb = True
+    if use_fb:
+        print(f"\n!! Understat non utilizzabile ({why}): passo alla modalita' di ripiego (quote + statistiche Fantacalcio.it)")
+        if a.check:
+            sys.exit("--check richiede Understat.")
+        fc_raw, fc_name = latest_fc_stats(a.statistiche)
+        if fc_raw is None:
+            sys.exit("Modalita' di ripiego impossibile: manca (o non e' leggibile) il file statistiche di Fantacalcio.it in "
+                     "statistiche/. Caricalo e rilancia.")
+        CFG["odds_weight"] = 1.0       # senza xG storico le quote sono la fonte migliore per la forza delle squadre
+        fb = FallbackProvider(odds_events, fc_raw, fc_name, season, a.calendario_ripiego, round_hint=a.giornata_ripiego, why=why)
+        if not fb.ms:
+            sys.exit("Modalita' di ripiego impossibile: nessuna partita nel calendario delle quote (serve ODDS_API_KEY valida).")
+        df, fixtures, problems, info = go(fb)
+    storico_dir = a.storico_ripiego if use_fb else a.storico
     if a.check or df is None:
         return
-    Path(a.storico).mkdir(parents=True, exist_ok=True)
-    saved = save_predictions(df, info, fixtures, now, a.storico)
+    Path(storico_dir).mkdir(parents=True, exist_ok=True)
+    saved = save_predictions(df, info, fixtures, now, storico_dir)
     lineup = best_lineup(df, modules)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     df.sort_values("EV", ascending=False).to_csv(out / "previsioni.csv", index=False)
     status = data_status(a, info.get("odds_msg", ""), info.get("inj_msg", ""), calib, tune_meta, fixtures, now)
+    if use_fb:
+        status["fonte"] = f"MODALITA' DI RIPIEGO: quote + statistiche Fantacalcio.it ({why})"
     kickoff = to_local(fixtures[0]["datetime"]) if fixtures else None
     reminders = build_reminders(status, info.get("rno", 0), now, kickoff)
     (out / "index.html").write_text(to_html(df, fixtures, now, modules, problems, info, calib, status, reminders), encoding="utf-8")
