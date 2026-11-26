@@ -49,6 +49,7 @@ jobs:
         id: refresh
         continue-on-error: true
         run: python fanta_predictor.py --refresh --giornata-ripiego 13
+      - name: Salvataggio
         if: always()
         run: |
           git config user.name "fanta-bot"
@@ -60,10 +61,17 @@ jobs:
           # se nel frattempo qualcuno (tu, da telefono) ha fatto un commit, il push verrebbe rifiutato: prima mi riallineo
           if ! git diff --cached --quiet; then
             git commit -m "aggiornamento previsioni"
+            ok=0
             for i in 1 2 3; do
-              git pull --rebase -X theirs origin main && git push && break
+              if git pull --rebase -X theirs origin main && git push; then ok=1; break; fi
               echo "push non riuscito (tentativo $i), riprovo"; sleep 5
             done
+            if [ "$ok" != "1" ]; then
+              echo "::error::Push fallito dopo 3 tentativi: le previsioni non sono state salvate."
+              exit 1
+            fi
+          else
+            echo "Nessuna modifica da salvare."
           fi
       - name: Riepilogo
         if: always()
